@@ -1,0 +1,6 @@
+-r base.txt
+
+# Production-only knobs. gunicorn is the only added line for now; everything
+# else is configuration via environment variables in invigilo.settings.prod.
+gunicorn==23.0.0
+sentry-sdk==2.18.0

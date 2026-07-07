@@ -1,0 +1,32 @@
+# Local environment overrides.
+.env
+.env.local
+.env.*.local
+*.sqlite3
+db.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.coverage.*
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Build artefacts
+staticfiles/
+media/
+logs/
+*.log

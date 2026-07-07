@@ -1,0 +1,72 @@
+# ----- Python / Django -----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.local
+.env.*.local
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.coverage.*
+.tox/
+.nox/
+
+# ----- Node / Next.js -----
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+.npm/
+.pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ----- Editors -----
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ----- Docker / ops -----
+*.log
+logs/
+tmp/
+temp/
+*.pid
+*.sock
+docker/volumes/
+docker/ssl/*.pem
+docker/ssl/*.key
+
+# ----- Database dumps -----
+*.sql.gz
+*.dump
+*.bak
+database/backups/
+
+# ----- Media (uploaded at runtime) -----
+media/
+staticfiles/
+
+# ----- Test artefacts -----
+playwright-report/
+test-results/
+.allure/

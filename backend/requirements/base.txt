@@ -1,0 +1,42 @@
+# ============================================================================
+# Base requirements for the INVIGILO backend.
+# Pinned to the major versions we test against; lock the transitive set in CI.
+# ============================================================================
+
+# --- Web framework -----------------------------------------------------------
+Django==5.1.4
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.1
+drf-spectacular==0.27.2
+
+# --- Database ----------------------------------------------------------------
+psycopg[binary,pool]>=3.2.3,<3.4
+
+# --- CORS / security ---------------------------------------------------------
+django-cors-headers==4.6.0
+django-environ==0.11.2
+
+# --- Filtering / pagination --------------------------------------------------
+django-filter==24.3
+
+# --- Async / background ------------------------------------------------------
+celery[redis]==5.4.0
+redis==5.2.1
+django-celery-beat==2.7.0
+
+# --- Auth --------------------------------------------------------------------
+argon2-cffi==23.1.0
+
+# --- Storage / media ---------------------------------------------------------
+Pillow>=11.0.0
+
+# --- Reports -----------------------------------------------------------------
+reportlab==4.2.5
+openpyxl==3.1.5
+
+# --- API docs ----------------------------------------------------------------
+# drf-spectacular included above; uritemplate is its only required extra
+uritemplate==4.1.1
+
+# --- Misc --------------------------------------------------------------------
+python-dateutil==2.9.0.post0

@@ -649,3 +649,77 @@ GitHub: https://github.com/TheRealKing8
 *Building smarter, fairer, and more efficient examination management.*
 
 </div>
+=======
+# INVIGILO
+
+> **Smart Examination Invigilation Management System** for universities and colleges.
+
+INVIGILO automates the planning, allocation, attendance, and reporting of institutional examinations. It replaces spreadsheets and ad-hoc emails with a single, auditable system that is fair to invigilators, transparent to heads of department, and predictable to examination officers.
+
+## Status
+
+| Phase | Deliverable | Status |
+|-------|-------------|--------|
+| 1 | Specification, architecture, ERD, folder structure | **Complete** |
+| 2 | Backend scaffold + Docker stack | In progress |
+| 3+ | Modules | See [docs/README.md](docs/README.md) |
+
+## What is INVIGILO?
+
+- **Setup** — faculties, departments, programmes, courses, units, students, invigilators, rooms.
+- **Scheduling** — exam periods, sessions, room allocation.
+- **Smart allocation** — a deterministic engine that assigns invigilators to sessions, respecting availability, workload, and capacity rules (1–50 candidates → 1 invigilator, 51–100 → 2, 101–150 → 3, 151+ → 4).
+- **Operation** — invigilator check-in / check-out, attendance, incident reporting, notifications.
+- **Closure** — reports (PDF, Excel, CSV), analytics dashboard, audit trail.
+
+## Tech stack
+
+**Backend** — Python 3.13, Django 5, Django REST Framework, PostgreSQL 16, Celery, Redis, SimpleJWT, drf-spectacular, ReportLab, OpenPyXL, Pillow, pytest.
+
+**Frontend** — Next.js 15 (App Router), React, TypeScript, Tailwind CSS, shadcn/ui, React Query, Axios, React Hook Form, Zod, Framer Motion.
+
+**Deployment** — Docker, Docker Compose, GitHub Actions, Nginx.
+
+Full architecture and trade-offs: [docs/04-architecture.md](docs/04-architecture.md).
+
+## Quick start (after Phase 2 lands)
+
+```bash
+git clone <repo>
+cd Examination-Invigilation-Management-System
+cp .env.example .env
+docker compose up --build
+# open http://localhost:8080
+```
+
+## Documentation
+
+The complete specification, architecture, ERD, and folder structure live in [`docs/`](docs/README.md):
+
+- [Software Requirements Specification](docs/01-srs.md)
+- [Requirements catalogue](docs/02-requirements.md)
+- [Use cases & role matrix](docs/03-use-cases.md)
+- [System architecture](docs/04-architecture.md)
+- [Entity-relationship diagram](docs/05-erd.md)
+- [Folder structure & module map](docs/06-folder-structure.md)
+
+## Repository layout
+
+```
+.
+├── backend/      # Django + DRF + Celery
+├── frontend/     # Next.js 15 + TypeScript
+├── database/     # SQL init, seeds, ops notes
+├── docker/       # Dockerfiles, nginx
+├── docs/         # the documentation set
+└── .github/      # workflows
+```
+
+## Contributing
+
+The project follows the roadmap in [docs/README.md](docs/README.md). Every code change must reference a requirement ID (e.g. `FR-ALC-03`) in its commit message and PR description.
+
+## License
+
+[MIT](LICENSE).
+>>>>>>> e50abdf (Initial backend setup for Invigilo)
