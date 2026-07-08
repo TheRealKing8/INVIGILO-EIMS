@@ -22,6 +22,7 @@ import environ
 # Paths
 # ----------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # ----------------------------------------------------------------------------
 # Environment parsing
@@ -40,9 +41,10 @@ env = environ.Env(
 
 # Read from a project-level .env first (so devs can keep secrets out of the
 # shell) and from the OS environment afterwards. The .env file is optional.
-env_file = BASE_DIR / ".env"
-if env_file.exists():
-    environ.Env.read_env(str(env_file))
+env_files = [PROJECT_ROOT / ".env", BASE_DIR / ".env"]
+for env_file in env_files:
+    if env_file.exists():
+        environ.Env.read_env(str(env_file))
 
 # ----------------------------------------------------------------------------
 # Core
@@ -116,18 +118,26 @@ ASGI_APPLICATION = "invigilo.asgi.application"
 # ----------------------------------------------------------------------------
 # Database
 # ----------------------------------------------------------------------------
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": env("POSTGRES_DB", default="invigilo"),
-        "USER": env("POSTGRES_USER", default="invigilo"),
-        "PASSWORD": env("POSTGRES_PASSWORD", default="postgres"),
-        "HOST": env("POSTGRES_HOST", default="postgres"),
-        "PORT": env("POSTGRES_PORT", default="5432"),
-        "CONN_MAX_AGE": 60,
-        "CONN_HEALTH_CHECKS": True,
+if env.bool("USE_SQLITE", default=False):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": str(BASE_DIR / "db.sqlite3"),
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": env("POSTGRES_DB", default="invigilo"),
+            "USER": env("POSTGRES_USER", default="invigilo"),
+            "PASSWORD": env("POSTGRES_PASSWORD", default="postgres"),
+            "HOST": env("POSTGRES_HOST", default="localhost"),
+            "PORT": env("POSTGRES_PORT", default="5432"),
+            "CONN_MAX_AGE": 60,
+            "CONN_HEALTH_CHECKS": True,
+        }
+    }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

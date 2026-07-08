@@ -500,23 +500,31 @@ npm run dev
 
 # 🗃️ Database
 
-Create PostgreSQL database.
+This project uses PostgreSQL for the main application data store.
 
-Configure:
+## Start the database services
 
-```
-DB_NAME=
-DB_USER=
-DB_PASSWORD=
-DB_HOST=
-DB_PORT=
-```
-
-Run migrations.
+From the project root, start Postgres and Redis with Docker Compose:
 
 ```bash
-python manage.py migrate
+docker compose up -d
 ```
+
+The compose file creates:
+
+- PostgreSQL on port 5432
+- Redis on port 6379
+
+## Run migrations
+
+From the backend folder:
+
+```bash
+cd backend
+.\.venv\Scripts\python manage.py migrate
+```
+
+If you prefer to use a different host or credentials, update the values in the project root .env file.
 
 ---
 

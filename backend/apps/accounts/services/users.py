@@ -18,7 +18,7 @@ from apps.core.exceptions import (
     ValidationFailedError,
 )
 
-from .models import User, UserRole, Role
+from ..models import User, UserRole, Role
 
 
 @transaction.atomic

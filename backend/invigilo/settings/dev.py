@@ -20,3 +20,12 @@ LOGGING["handlers"]["console"]["formatter"] = "console"  # noqa: F405
 CHANNEL_LAYERS = {
     "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"},
 }  # type: ignore[misc]
+
+# Use an in-memory cache locally so the throttling and session layers do not
+# depend on Redis being available.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "invigilo-local",
+    }
+}

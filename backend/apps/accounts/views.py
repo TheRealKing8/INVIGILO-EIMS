@@ -64,7 +64,31 @@ class AuthViewSet(viewsets.ViewSet):
             email=serializer.validated_data["email"],
             password=serializer.validated_data["password"],
         )
-        return Response(services.auth.issue_token_pair(user, request=request), status=status.HTTP_200_OK)
+        return Response(
+            services.auth.issue_token_pair(user, request=request),
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        request=UserCreateSerializer,
+        responses={201: OpenApiResponse(description="User created + token pair")},
+    )
+    def register(self, request: Any) -> Response:
+        """Create a user account and immediately issue a token pair."""
+        serializer = UserCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        password = serializer.validated_data.pop("password", None) or None
+        roles = serializer.validated_data.pop("roles", [])
+        user = services.users.create_user(
+            password=password,
+            roles=roles,
+            is_email_verified=True,
+            **serializer.validated_data,
+        )
+        return Response(
+            services.auth.issue_token_pair(user, request=request),
+            status=status.HTTP_201_CREATED,
+        )
 
     @extend_schema(
         request=RefreshRequestSerializer,

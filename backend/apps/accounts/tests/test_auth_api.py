@@ -103,6 +103,19 @@ def test_login_locked_account_returns_403(client: APIClient, verified_user: User
     assert response.status_code == 403
 
 
+def test_register_creates_user_and_returns_tokens(client: APIClient) -> None:
+    response = client.post(
+        reverse("auth-register"),
+        {"full_name": "New User", "email": "new@x.com", "password": "S3cur3Passw0rd!"},
+        format="json",
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert "access" in body
+    assert body["user"]["email"] == "new@x.com"
+    assert User.objects.filter(email="new@x.com").exists()
+
+
 # ---------------------------------------------------------------------------
 # Refresh
 # ---------------------------------------------------------------------------
