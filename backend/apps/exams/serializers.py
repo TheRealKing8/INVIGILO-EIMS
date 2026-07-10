@@ -1,0 +1,172 @@
+from rest_framework import serializers
+
+from apps.academic.models import Course
+from apps.rooms.models import Room
+
+from .models import ExamPeriod, ExamSession
+
+
+class ExamPeriodSerializer(serializers.ModelSerializer):
+    session_count = serializers.IntegerField(source="sessions.count", read_only=True)
+
+    class Meta:
+        model = ExamPeriod
+        fields = (
+            "id",
+            "code",
+            "name",
+            "starts_on",
+            "ends_on",
+            "is_active",
+            "session_count",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at", "session_count")
+
+    def validate(self, attrs):
+        starts = attrs.get("starts_on", getattr(self.instance, "starts_on", None))
+        ends = attrs.get("ends_on", getattr(self.instance, "ends_on", None))
+        if starts and ends and starts > ends:
+            raise serializers.ValidationError(
+                {"ends_on": "ends_on must be on or after starts_on"}
+            )
+        return attrs
+
+
+class ExamSessionSerializer(serializers.ModelSerializer):
+    course_code = serializers.CharField(source="course.code", read_only=True)
+    course_title = serializers.CharField(source="course.title", read_only=True)
+    period_code = serializers.CharField(source="period.code", read_only=True)
+    room_code = serializers.CharField(source="room.code", read_only=True)
+    building_code = serializers.CharField(source="room.building.code", read_only=True, default=None)
+    course_unit_code = serializers.CharField(
+        source="course_unit.code", read_only=True, default=None
+    )
+    course_unit_year = serializers.IntegerField(
+        source="course_unit.year", read_only=True, default=None
+    )
+    course_unit_semester = serializers.IntegerField(
+        source="course_unit.semester", read_only=True, default=None
+    )
+    faculty_code = serializers.SerializerMethodField()
+    faculty_name = serializers.SerializerMethodField()
+    department_code = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    program_code = serializers.SerializerMethodField()
+    program_name = serializers.SerializerMethodField()
+    duration_minutes = serializers.SerializerMethodField()
+    fill_pct = serializers.SerializerMethodField()
+    has_allocation = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ExamSession
+        fields = (
+            "id",
+            "period",
+            "period_code",
+            "course",
+            "course_code",
+            "course_title",
+            "course_unit",
+            "course_unit_code",
+            "course_unit_year",
+            "course_unit_semester",
+            "faculty_code",
+            "faculty_name",
+            "department_code",
+            "department_name",
+            "program_code",
+            "program_name",
+            "room",
+            "room_code",
+            "building_code",
+            "starts_at",
+            "ends_at",
+            "duration_minutes",
+            "capacity",
+            "registered",
+            "invigilators_required",
+            "status",
+            "special_requirements",
+            "fill_pct",
+            "has_allocation",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "created_at",
+            "updated_at",
+            "course_code",
+            "course_title",
+            "period_code",
+            "course_unit_code",
+            "course_unit_year",
+            "course_unit_semester",
+            "faculty_code",
+            "faculty_name",
+            "department_code",
+            "department_name",
+            "program_code",
+            "program_name",
+            "room_code",
+            "building_code",
+            "duration_minutes",
+            "fill_pct",
+            "has_allocation",
+        )
+
+    def get_faculty_code(self, obj: ExamSession) -> str | None:
+        return obj.course.program.department.faculty.code if obj.course_id else None
+
+    def get_faculty_name(self, obj: ExamSession) -> str | None:
+        return obj.course.program.department.faculty.name if obj.course_id else None
+
+    def get_department_code(self, obj: ExamSession) -> str | None:
+        return obj.course.program.department.code if obj.course_id else None
+
+    def get_department_name(self, obj: ExamSession) -> str | None:
+        return obj.course.program.department.name if obj.course_id else None
+
+    def get_program_code(self, obj: ExamSession) -> str | None:
+        return obj.course.program.code if obj.course_id else None
+
+    def get_program_name(self, obj: ExamSession) -> str | None:
+        return obj.course.program.name if obj.course_id else None
+
+    def get_duration_minutes(self, obj: ExamSession) -> int | None:
+        if not obj.starts_at or not obj.ends_at:
+            return None
+        delta = obj.ends_at - obj.starts_at
+        return int(delta.total_seconds() // 60)
+
+    def get_fill_pct(self, obj: ExamSession) -> float:
+        if not obj.capacity:
+            return 0.0
+        return round((obj.registered / obj.capacity) * 100, 1)
+
+    def get_has_allocation(self, obj: ExamSession) -> bool:
+        return getattr(obj, "_has_allocation", False)
+
+    def validate(self, attrs):
+        starts = attrs.get("starts_at", getattr(self.instance, "starts_at", None))
+        ends = attrs.get("ends_at", getattr(self.instance, "ends_at", None))
+        if starts and ends and starts >= ends:
+            raise serializers.ValidationError(
+                {"ends_at": "ends_at must be after starts_at"}
+            )
+        capacity = attrs.get("capacity", getattr(self.instance, "capacity", None))
+        registered = attrs.get("registered", getattr(self.instance, "registered", 0))
+        if registered and capacity and registered > capacity:
+            raise serializers.ValidationError(
+                {"registered": "registered cannot exceed capacity"}
+            )
+        # If a course_unit is provided, it must belong to the same course.
+        unit = attrs.get("course_unit", getattr(self.instance, "course_unit", None))
+        course = attrs.get("course", getattr(self.instance, "course", None))
+        if unit and course and unit.course_id != course.id:
+            raise serializers.ValidationError(
+                {"course_unit": "course_unit must belong to the selected course"}
+            )
+        return attrs

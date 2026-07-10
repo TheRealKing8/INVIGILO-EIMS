@@ -89,12 +89,25 @@ def issue_token_pair(user: User, *, request: Any = None) -> dict[str, Any]:
 
     The refresh token is generated with ``secrets`` (not by SimpleJWT) so
     we can hash and persist it. The access token is signed with
-    SimpleJWT; it carries the user id and primary role claim.
+    SimpleJWT; it carries the user id, primary role, and the full set
+    of permission codenames granted to the user (the union across all
+    active roles, not just the primary one). The frontend uses
+    ``permissions`` for client-side gating; the server is still the
+    source of truth and re-checks ``HasPermission`` on every request.
     """
+    # Build the permission set once and reuse for the JWT claim and the
+    # response payload. ``user.permissions()`` is a queryset; we
+    # materialise it to a list to avoid round-tripping for the two
+    # consumers below.
+    permission_codes: list[str] = list(
+        user.permissions().values_list("codename", flat=True)
+    )
+
     access = AccessToken()
     access["user_id"] = str(user.id)
     access["email"] = user.email
     access["role"] = user.primary_role_code
+    access["permissions"] = permission_codes
     access["iss"] = settings.SIMPLE_JWT["ISSUER"]
     access["aud"] = settings.SIMPLE_JWT["AUDIENCE"]
 
@@ -131,6 +144,7 @@ def issue_token_pair(user: User, *, request: Any = None) -> dict[str, Any]:
             "email": user.email,
             "full_name": user.full_name,
             "role": user.primary_role_code,
+            "permissions": permission_codes,
             "is_email_verified": user.is_email_verified,
         },
     }

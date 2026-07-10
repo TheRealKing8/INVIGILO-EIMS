@@ -41,6 +41,32 @@ ROLES: Final[tuple[dict, ...]] = (
         "name": "Faculty Dean",
         "description": "Faculty-level oversight and reports.",
     },
+    {
+        "code": "STUDENT",
+        "name": "Student",
+        "description": (
+            "Registered student. Sees own timetable, can check in to "
+            "own sessions, and can submit incident reports about their "
+            "exam environment."
+        ),
+    },
+    {
+        "code": "SECURITY_OFFICER",
+        "name": "Security Officer",
+        "description": (
+            "Gates / door staff. Logs attendance for any session, "
+            "submits and triages incident reports, and reviews the "
+            "open incident feed."
+        ),
+    },
+    {
+        "code": "GUEST",
+        "name": "Guest",
+        "description": (
+            "Read-only public access. Sees the public timetable and "
+            "own notifications. No write access."
+        ),
+    },
 )
 
 
@@ -56,6 +82,8 @@ PERMISSIONS: Final[tuple[dict, ...]] = (
     {"codename": "accounts.role.assign", "name": "Assign roles"},
     {"codename": "accounts.profile.update_own", "name": "Update own profile"},
     # academic
+    {"codename": "academic.university.crud", "name": "Manage universities"},
+    {"codename": "academic.campus.crud", "name": "Manage campuses"},
     {"codename": "academic.faculty.crud", "name": "Manage faculties"},
     {"codename": "academic.department.crud", "name": "Manage departments"},
     {"codename": "academic.programme.crud", "name": "Manage programmes"},
@@ -96,6 +124,12 @@ PERMISSIONS: Final[tuple[dict, ...]] = (
     # settings
     {"codename": "settings.read", "name": "View system settings"},
     {"codename": "settings.update", "name": "Update system settings"},
+    # extended RBAC (Module 1)
+    {"codename": "exam.session.view_own", "name": "View own exam sessions"},
+    {"codename": "timetable.view_own", "name": "View own timetable"},
+    {"codename": "timetable.public.view", "name": "View public timetable"},
+    {"codename": "attendance.checkin_any", "name": "Check in any attendee"},
+    {"codename": "incident.log_for_others", "name": "Log incidents for others"},
 )
 
 
@@ -112,6 +146,10 @@ ROLE_PERMISSIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
         "EXAMINATION_OFFICER",
         (
             "accounts.profile.update_own",
+            "academic.university.crud",
+            "academic.campus.crud",
+            "academic.faculty.crud",
+            "academic.department.crud",
             "academic.programme.crud",
             "academic.course.crud",
             "academic.unit.crud",
@@ -157,6 +195,7 @@ ROLE_PERMISSIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
         "HEAD_OF_DEPARTMENT",
         (
             "accounts.profile.update_own",
+            "academic.department.crud",
             "people.availability.update_own",
             "people.student.crud",
             "people.invigilator.crud",
@@ -174,6 +213,8 @@ ROLE_PERMISSIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
         "FACULTY_DEAN",
         (
             "accounts.profile.update_own",
+            "academic.faculty.crud",
+            "academic.department.crud",
             "people.availability.update_own",
             "people.student.crud",
             "people.invigilator.crud",
@@ -185,6 +226,39 @@ ROLE_PERMISSIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "report.view",
             "report.export",
             "analytics.view",
+        ),
+    ),
+    (
+        "STUDENT",
+        (
+            "accounts.profile.update_own",
+            "exam.session.view_own",
+            "timetable.view_own",
+            "timetable.public.view",
+            "attendance.checkin_own",
+            "notification.view_own",
+            "incident.create",
+        ),
+    ),
+    (
+        "SECURITY_OFFICER",
+        (
+            "accounts.profile.update_own",
+            "attendance.checkin_any",
+            "attendance.view",
+            "incident.create",
+            "incident.view",
+            "incident.update_status",
+            "incident.log_for_others",
+            "notification.view_own",
+            "report.view",
+        ),
+    ),
+    (
+        "GUEST",
+        (
+            "timetable.public.view",
+            "notification.view_own",
         ),
     ),
 )

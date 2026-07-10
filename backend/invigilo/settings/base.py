@@ -57,6 +57,14 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.
 LOCAL_APPS = [
     "apps.core",
     "apps.accounts",
+    "apps.academic",
+    "apps.rooms",
+    "apps.exams",
+    "apps.invigilators",
+    "apps.allocations",
+    "apps.incidents",
+    "apps.reports",
+    "apps.audit",
 ]
 
 THIRD_PARTY_APPS = [
@@ -118,14 +126,25 @@ ASGI_APPLICATION = "invigilo.asgi.application"
 # ----------------------------------------------------------------------------
 # Database
 # ----------------------------------------------------------------------------
-if env.bool("USE_SQLITE", default=False):
+# Three engines are supported, selected via the DB_BACKEND env var:
+#
+#   * ``postgres`` — PostgreSQL (default; used by production)
+#   * ``mysql``    — MySQL / MariaDB (legacy local dev, e.g. XAMPP)
+#   * ``sqlite``   — SQLite (used by pytest; can also be a quick dev fallback)
+#
+# All credentials are read from the environment; sensible defaults match
+# a fresh PostgreSQL install so a fresh checkout Just Works.
+# ----------------------------------------------------------------------------
+_DB_BACKEND = env("DB_BACKEND", default="postgres").lower()
+
+if _DB_BACKEND == "sqlite":
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": str(BASE_DIR / "db.sqlite3"),
         }
     }
-else:
+elif _DB_BACKEND == "postgres":
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -138,6 +157,32 @@ else:
             "CONN_HEALTH_CHECKS": True,
         }
     }
+elif _DB_BACKEND == "mysql":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": env("MYSQL_DB", default="invigilo"),
+            "USER": env("MYSQL_USER", default="root"),
+            "PASSWORD": env("MYSQL_PASSWORD", default=""),
+            "HOST": env("MYSQL_HOST", default="127.0.0.1"),
+            "PORT": env("MYSQL_PORT", default="3306"),
+            "OPTIONS": {
+                "charset": "utf8mb4",
+                # MariaDB / MySQL 8 collation that supports 4-byte UTF-8
+                # (emojis in incident reports, full Unicode in names).
+                "init_command": (
+                    "SET sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE,"
+                    "NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+                ),
+            },
+            "CONN_MAX_AGE": 60,
+            "CONN_HEALTH_CHECKS": True,
+        }
+    }
+else:
+    raise RuntimeError(
+        f"Unknown DB_BACKEND={_DB_BACKEND!r}. Use 'mysql', 'postgres', or 'sqlite'."
+    )
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -251,6 +296,14 @@ SPECTACULAR_SETTINGS = {
         {"name": "auth", "description": "Authentication, password, email verification."},
         {"name": "users", "description": "User administration."},
         {"name": "health", "description": "Liveness and readiness."},
+        {"name": "academic", "description": "Faculties, departments, programs, courses."},
+        {"name": "rooms", "description": "Buildings and rooms used as exam venues."},
+        {"name": "exams", "description": "Exam periods and individual sessions."},
+        {"name": "invigilators", "description": "Invigilator profiles and availability."},
+        {"name": "allocations", "description": "Allocation runs, individual allocations, and conflicts."},
+        {"name": "incidents", "description": "Incidents reported during exam sessions."},
+        {"name": "reports", "description": "Report exports (PDF / Excel / CSV) and downloads."},
+        {"name": "audit", "description": "Append-only audit log of consequential writes."},
     ],
 }
 

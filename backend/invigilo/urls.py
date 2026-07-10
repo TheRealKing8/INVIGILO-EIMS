@@ -34,6 +34,20 @@ def root(_request):  # type: ignore[no-untyped-def]
 api_v1_patterns = [
     path("auth/", include(("apps.accounts.urls", "accounts"), namespace="auth")),
     path("users/", include(("apps.accounts.urls_users", "accounts_users"), namespace="users")),
+    path("academic/", include(("apps.academic.urls", "academic"), namespace="academic")),
+    path("rooms/", include(("apps.rooms.urls", "rooms"), namespace="rooms")),
+    path("exams/", include(("apps.exams.urls", "exams"), namespace="exams")),
+    path(
+        "invigilators/",
+        include(("apps.invigilators.urls", "invigilators"), namespace="invigilators"),
+    ),
+    path(
+        "allocations/",
+        include(("apps.allocations.urls", "allocations"), namespace="allocations"),
+    ),
+    path("incidents/", include(("apps.incidents.urls", "incidents"), namespace="incidents")),
+    path("reports/", include(("apps.reports.urls", "reports"), namespace="reports")),
+    path("audit/", include(("apps.audit.urls", "audit"), namespace="audit")),
 ]
 
 urlpatterns = [

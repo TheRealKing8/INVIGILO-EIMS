@@ -20,6 +20,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.core.permissions import HasPermission
 
@@ -204,6 +205,35 @@ class AuthViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         services.users.update_user(request.user, **serializer.validated_data)
         return Response(UserSerializer(request.user).data, status=status.HTTP_200_OK)
+
+    # `me` and `update_me` must use JWT auth even though every other
+    # action in this viewset is anonymous. Because we wire the viewset
+    # manually with ``as_view({"get": "me", ...})`` instead of through
+    # a router, DRF does not set ``self.action``; we infer the action
+    # from the URL path.
+    _AUTH_REQUIRED_PATH_SUFFIXES = ("/me/", "/me/update/")
+
+    def _current_action(self) -> str:
+        request = getattr(self, "request", None)
+        if request is None:
+            return ""
+        path = (request.path or "").rstrip("/")
+        for suffix in self._AUTH_REQUIRED_PATH_SUFFIXES:
+            if path.endswith(suffix.rstrip("/")):
+                # Map the URL back to the method name so future logic
+                # can keep using ``self.action``-style names if it grows.
+                return {"me/": "me", "me/update/": "update_me"}[suffix.lstrip("/")]
+        return ""
+
+    def get_authenticators(self):  # type: ignore[no-untyped-def]
+        if self._current_action() in {"me", "update_me"}:
+            return [JWTAuthentication()]
+        return []
+
+    def get_permissions(self):  # type: ignore[no-untyped-def]
+        if self._current_action() in {"me", "update_me"}:
+            return [IsAuthenticated()]
+        return []
 
 
 class UserViewSet(viewsets.ViewSet):

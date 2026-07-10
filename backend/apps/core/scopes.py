@@ -87,6 +87,20 @@ class ScopedQuerySetMixin:
                 return Q(pk__in=[])
             return Q(department__faculty_id=faculty_id)
 
+        # SECURITY_OFFICERs see everything — they need a full read of
+        # attendance, incidents, and live session state at the door.
+        if role == "SECURITY_OFFICER":
+            return None
+
+        # STUDENTs and GUESTs have no queryset-level scope. Per-row
+        # filtering for "my own" data is the responsibility of the
+        # specific endpoint (e.g. ``/exams/sessions/?student=me``). At
+        # the queryset level they get an empty result set, which is the
+        # safe default — an unfiltered Student view would leak the
+        # whole timetable.
+        if role in ("STUDENT", "GUEST"):
+            return Q(pk__in=[])
+
         return Q(pk__in=[])
 
     def get_queryset(self) -> QuerySet:  # type: ignore[override]

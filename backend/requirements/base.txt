@@ -10,7 +10,11 @@ djangorestframework-simplejwt==5.3.1
 drf-spectacular==0.27.2
 
 # --- Database ----------------------------------------------------------------
+# PostgreSQL is the production engine; psycopg3 is used at runtime.
+# mysqlclient stays here as a dev-only convenience for one-off data migrations
+# from a legacy XAMPP MariaDB instance; production images can drop it.
 psycopg[binary,pool]>=3.2.3,<3.4
+mysqlclient>=2.2.4 ; sys_platform != "linux" or extra == "dev-mysql"
 
 # --- CORS / security ---------------------------------------------------------
 django-cors-headers==4.6.0

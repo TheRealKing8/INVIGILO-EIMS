@@ -14,6 +14,12 @@ from .base import *  # noqa: F401,F403
 DEBUG = False
 ALLOWED_HOSTS = ["*"]
 
+# Belt-and-braces: even though DJANGO_SETTINGS_MODULE points here, some
+# pytest-django bootstraps cache ROOT_URLCONF from a different settings
+# module. Forcing it here makes `reverse(...)` in tests find the real
+# URL patterns instead of the bare "no patterns" resolver.
+ROOT_URLCONF = "invigilo.urls"
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",

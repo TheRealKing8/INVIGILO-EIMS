@@ -27,7 +27,14 @@ def client() -> APIClient:
 
 @pytest.fixture
 def invigilator_role() -> Role:
-    return Role.objects.create(code="INVIGILATOR", name="Invigilator")
+    # The 0002_seed_rbac migration already creates an INVIGILATOR role;
+    # use update_or_create so this fixture is idempotent regardless of
+    # whether the test DB started empty (and so we don't fight a
+    # UNIQUE-constraint failure on the role.code index).
+    role, _ = Role.objects.update_or_create(
+        code="INVIGILATOR", defaults={"name": "Invigilator", "is_active": True}
+    )
+    return role
 
 
 @pytest.fixture
@@ -47,7 +54,7 @@ def verified_user(invigilator_role: Role):  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 def test_login_returns_token_pair(client: APIClient, verified_user: User) -> None:
     response = client.post(
-        reverse("auth-login"),
+        reverse("auth:auth-login"),
         {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
@@ -59,9 +66,64 @@ def test_login_returns_token_pair(client: APIClient, verified_user: User) -> Non
     assert body["user"]["role"] == "INVIGILATOR"
 
 
+def test_login_response_includes_permissions_claim(
+    client: APIClient, verified_user: User
+) -> None:
+    """The login response must include a ``permissions`` list on the user.
+
+    The frontend uses this to drive nav visibility and route guards.
+    The list is the union of permission codenames granted across all
+    of the user's active roles.
+    """
+    response = client.post(
+        reverse("auth:auth-login"),
+        {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
+        format="json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["user"]["permissions"], list)
+    # Invigilator's seeded grants (see apps/accounts/seed.py).
+    assert "attendance.checkin_own" in body["user"]["permissions"]
+    assert "incident.create" in body["user"]["permissions"]
+    # An admin-only permission should NOT be on this invigilator's list.
+    assert "settings.update" not in body["user"]["permissions"]
+
+
+def test_login_access_token_carries_permissions_claim(
+    client: APIClient, verified_user: User
+) -> None:
+    """The encoded JWT must carry the same ``permissions`` claim.
+
+    The frontend reads it from ``localStorage`` (saved at login) and
+    uses it across page navigations. The claim must match the response
+    payload so client and server are always in agreement.
+    """
+    import jwt
+    from django.conf import settings
+
+    response = client.post(
+        reverse("auth:auth-login"),
+        {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
+        format="json",
+    )
+    access = response.json()["access"]
+    payload = jwt.decode(
+        access,
+        settings.SIMPLE_JWT["SIGNING_KEY"],
+        algorithms=[settings.SIMPLE_JWT["ALGORITHM"]],
+        audience=settings.SIMPLE_JWT["AUDIENCE"],
+        issuer=settings.SIMPLE_JWT["ISSUER"],
+    )
+    assert payload["role"] == "INVIGILATOR"
+    assert "permissions" in payload
+    assert "attendance.checkin_own" in payload["permissions"]
+    assert "settings.update" not in payload["permissions"]
+
+
 def test_login_wrong_password_returns_401(client: APIClient, verified_user: User) -> None:
     response = client.post(
-        reverse("auth-login"),
+        reverse("auth:auth-login"),
         {"email": "alice@x.com", "password": "wrong"},
         format="json",
     )
@@ -72,7 +134,7 @@ def test_login_wrong_password_returns_401(client: APIClient, verified_user: User
 
 def test_login_unknown_user_returns_401(client: APIClient) -> None:
     response = client.post(
-        reverse("auth-login"),
+        reverse("auth:auth-login"),
         {"email": "nobody@x.com", "password": "x"},
         format="json",
     )
@@ -82,7 +144,7 @@ def test_login_unknown_user_returns_401(client: APIClient) -> None:
 def test_login_unverified_email_returns_403(client: APIClient) -> None:
     User.objects.create_user(email="n@x.com", full_name="N", password="S3cur3Passw0rd!")
     response = client.post(
-        reverse("auth-login"),
+        reverse("auth:auth-login"),
         {"email": "n@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
@@ -96,7 +158,7 @@ def test_login_locked_account_returns_403(client: APIClient, verified_user: User
     verified_user.locked_until = timezone.now() + timezone.timedelta(minutes=10)
     verified_user.save()
     response = client.post(
-        reverse("auth-login"),
+        reverse("auth:auth-login"),
         {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
@@ -105,7 +167,7 @@ def test_login_locked_account_returns_403(client: APIClient, verified_user: User
 
 def test_register_creates_user_and_returns_tokens(client: APIClient) -> None:
     response = client.post(
-        reverse("auth-register"),
+        reverse("auth:auth-register"),
         {"full_name": "New User", "email": "new@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
@@ -124,7 +186,7 @@ def test_refresh_rotates_and_revokes_old_token(client: APIClient, verified_user:
     old_refresh = pair["refresh"]
 
     response = client.post(
-        reverse("auth-refresh"),
+        reverse("auth:auth-refresh"),
         {"refresh": old_refresh},
         format="json",
     )
@@ -138,7 +200,7 @@ def test_refresh_with_revoked_token_rejects(client: APIClient, verified_user: Us
     pair = auth_service.issue_token_pair(verified_user)
     auth_service.revoke_refresh(pair["refresh"])
     response = client.post(
-        reverse("auth-refresh"),
+        reverse("auth:auth-refresh"),
         {"refresh": pair["refresh"]},
         format="json",
     )
@@ -151,7 +213,7 @@ def test_refresh_with_revoked_token_rejects(client: APIClient, verified_user: Us
 def test_logout_revokes_refresh(client: APIClient, verified_user: User) -> None:
     pair = auth_service.issue_token_pair(verified_user)
     response = client.post(
-        reverse("auth-logout"),
+        reverse("auth:auth-logout"),
         {"refresh": pair["refresh"]},
         format="json",
     )
@@ -166,7 +228,7 @@ def test_email_verification_round_trip(client: APIClient) -> None:
     user = User.objects.create_user(email="v@x.com", full_name="V", password="S3cur3Passw0rd!")
     token = auth_service.issue_email_verification(user)
     response = client.post(
-        reverse("auth-verify-confirm"),
+        reverse("auth:auth-verify-confirm"),
         {"token": token},
         format="json",
     )
@@ -178,7 +240,7 @@ def test_email_verification_round_trip(client: APIClient) -> None:
 
 def test_email_verification_unknown_token_returns_404(client: APIClient) -> None:
     response = client.post(
-        reverse("auth-verify-confirm"),
+        reverse("auth:auth-verify-confirm"),
         {"token": "nope"},
         format="json",
     )
@@ -190,7 +252,7 @@ def test_email_verification_unknown_token_returns_404(client: APIClient) -> None
 # ---------------------------------------------------------------------------
 def test_password_reset_request_is_idempotent_for_unknown_email(client: APIClient) -> None:
     response = client.post(
-        reverse("auth-password-reset-request"),
+        reverse("auth:auth-password-reset-request"),
         {"email": "nobody@x.com"},
         format="json",
     )
@@ -204,7 +266,7 @@ def test_password_reset_round_trip_revokes_refresh_tokens(
     token = auth_service.issue_password_reset(verified_user.email)
     assert token is not None
     response = client.post(
-        reverse("auth-password-reset-confirm"),
+        reverse("auth:auth-password-reset-confirm"),
         {"token": token, "new_password": "N3wS3cur3Pass!"},
         format="json",
     )
@@ -225,7 +287,7 @@ def test_password_reset_round_trip_revokes_refresh_tokens(
 def test_password_change_requires_current(client: APIClient, verified_user: User) -> None:
     client.force_authenticate(verified_user)
     response = client.post(
-        reverse("auth-password-change"),
+        reverse("auth:auth-password-change"),
         {"current": "wrong", "new": "An0therS3cur3Pass!"},
         format="json",
     )
@@ -235,7 +297,7 @@ def test_password_change_requires_current(client: APIClient, verified_user: User
 def test_password_change_succeeds(client: APIClient, verified_user: User) -> None:
     client.force_authenticate(verified_user)
     response = client.post(
-        reverse("auth-password-change"),
+        reverse("auth:auth-password-change"),
         {"current": "S3cur3Passw0rd!", "new": "An0therS3cur3Pass!"},
         format="json",
     )
@@ -249,7 +311,7 @@ def test_password_change_succeeds(client: APIClient, verified_user: User) -> Non
 # ---------------------------------------------------------------------------
 def test_me_returns_serialized_user(client: APIClient, verified_user: User) -> None:
     client.force_authenticate(verified_user)
-    response = client.get(reverse("auth-me"))
+    response = client.get(reverse("auth:auth-me"))
     assert response.status_code == 200
     body = response.json()
     assert body["email"] == "alice@x.com"
@@ -260,7 +322,7 @@ def test_me_returns_serialized_user(client: APIClient, verified_user: User) -> N
 def test_me_update_partial(client: APIClient, verified_user: User) -> None:
     client.force_authenticate(verified_user)
     response = client.patch(
-        reverse("auth-me-update"),
+        reverse("auth:auth-me-update"),
         {"phone": "+1-555-0100", "time_zone": "Africa/Nairobi"},
         format="json",
     )

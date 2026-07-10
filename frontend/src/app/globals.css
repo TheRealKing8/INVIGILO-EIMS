@@ -1,33 +1,212 @@
+/* ============================================================================
+ * INVIGILO — global styles & design system
+ *
+ * Tokens are defined here so the rest of the app can stay in utility classes.
+ * The palette is "emerald-900 base + emerald-500 accents + white surfaces"
+ * with slate used for ink. Anything that needs to stay perfectly consistent
+ * (a pixel-precise hero, an embedded card) reads from one of these tokens.
+ * ========================================================================== */
+
 @import "tailwindcss";
 
 :root {
-  --background: #f8fbff;
-  --foreground: #0f172a;
+  /* Surfaces ------------------------------------------------------------- */
+  --background: #f8fafc;          /* page background (slate-50)            */
+  --surface: #ffffff;             /* card / panel                           */
+  --surface-muted: #f1f5f9;       /* nested / table-stripe                  */
+  --surface-dark: #022c22;        /* sidebar / hero panel (emerald-950)     */
+  --surface-darker: #011a14;      /* deepest accent surface                 */
+
+  /* Brand ---------------------------------------------------------------- */
+  --brand-50:  #ecfdf5;
+  --brand-100: #d1fae5;
+  --brand-200: #a7f3d0;
+  --brand-300: #6ee7b7;
+  --brand-400: #34d399;           /* emerald-400  — live, badges            */
+  --brand-500: #10b981;           /* emerald-500  — accent / focus ring     */
+  --brand-600: #059669;           /* emerald-600  — primary hover           */
+  --brand-700: #047857;           /* emerald-700  — primary (CTA, brand)    */
+  --brand-800: #065f46;           /* emerald-800  — pressed                 */
+  --brand-900: #064e3b;           /* emerald-900  — sidebar ink             */
+
+  /* Ink ------------------------------------------------------------------ */
+  --ink-900: #0f172a;             /* primary text                            */
+  --ink-700: #334155;             /* secondary text                          */
+  --ink-500: #64748b;             /* muted text                              */
+  --ink-400: #94a3b8;             /* placeholder / disabled                  */
+  --ink-300: #cbd5e1;             /* dividers                                */
+  --ink-200: #e2e8f0;             /* light dividers                          */
+  --ink-100: #f1f5f9;             /* subtle backgrounds                      */
+
+  /* Status --------------------------------------------------------------- */
+  --success-500: #10b981;
+  --success-100: #d1fae5;
+  --warning-500: #f59e0b;
+  --warning-100: #fef3c7;
+  --danger-500:  #f43f5e;
+  --danger-100:  #ffe4e6;
+  --info-500:    #0ea5e9;
+  --info-100:    #e0f2fe;
+
+  /* Effects -------------------------------------------------------------- */
+  --ring: 0 0 0 3px rgba(16, 185, 129, 0.25);
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04),
+                 0 8px 24px -12px rgba(15, 23, 42, 0.10);
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04),
+                 0 2px 8px rgba(15, 23, 42, 0.04);
+  --shadow-elev: 0 4px 12px rgba(6, 95, 70, 0.12),
+                 0 24px 64px -16px rgba(6, 95, 70, 0.18);
 }
 
 @theme inline {
   --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-dark: var(--surface-dark);
+  --color-ink-900: var(--ink-900);
+  --color-ink-700: var(--ink-700);
+  --color-ink-500: var(--ink-500);
+  --color-ink-400: var(--ink-400);
+  --color-ink-300: var(--ink-300);
+  --color-ink-200: var(--ink-200);
+  --color-ink-100: var(--ink-100);
+  --color-brand-50:  var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+  --color-brand-800: var(--brand-800);
+  --color-brand-900: var(--brand-900);
+  --color-success-500: var(--success-500);
+  --color-success-100: var(--success-100);
+  --color-warning-500: var(--warning-500);
+  --color-warning-100: var(--warning-100);
+  --color-danger-500:  var(--danger-500);
+  --color-danger-100:  var(--danger-100);
+  --color-info-500:    var(--info-500);
+  --color-info-100:    var(--info-100);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 html {
   scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  color-scheme: light;
+}
+
+/* ============================================================================
+ * Dark theme — neutral inversion only; emerald brand is preserved.
+ *
+ * The theme is driven by `data-theme="dark"` on <html>, set by
+ * <ThemeScript /> before paint and kept in sync by <ThemeProvider />.
+ * Components stay on semantic classes (bg-surface, text-ink-900, etc.)
+ * and CSS variables do the work below.
+ * ========================================================================== */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces ------------------------------------------------------------- */
+  --background: #020617;          /* slate-950 — page background              */
+  --surface: #0f172a;             /* slate-900 — card / panel                 */
+  --surface-muted: #1e293b;       /* slate-800 — nested / table-stripe        */
+  --surface-dark: #022c22;        /* keep emerald-950 — sidebar / hero panel  */
+  --surface-darker: #011a14;
+
+  /* Ink ------------------------------------------------------------------ */
+  --ink-900: #f1f5f9;             /* primary text                              */
+  --ink-700: #cbd5e1;             /* secondary text                            */
+  --ink-500: #94a3b8;             /* muted text                                */
+  --ink-400: #64748b;             /* placeholder / disabled                    */
+  --ink-300: #334155;             /* dividers                                  */
+  --ink-200: #1e293b;             /* light dividers                            */
+  --ink-100: #0f172a;             /* subtle backgrounds                        */
+
+  /* Effects -------------------------------------------------------------- */
+  --ring: 0 0 0 3px rgba(16, 185, 129, 0.35);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30),
+                 0 8px 24px -12px rgba(0, 0, 0, 0.40);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.30),
+                 0 2px 8px rgba(0, 0, 0, 0.20);
+  --shadow-elev: 0 4px 12px rgba(0, 0, 0, 0.40),
+                 0 24px 64px -16px rgba(0, 0, 0, 0.50);
+}
+
+/* The dark sidebar / hero panels (bg-surface-dark) sit on top of a dark
+ * page in dark mode — give their hairline borders a hint more contrast
+ * so the edge between them and the body doesn't disappear. */
+[data-theme="dark"] .bg-surface-dark {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 body {
   margin: 0;
   background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--ink-900);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  font-feature-settings: "ss01", "cv11", "tnum";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 ::selection {
-  background: #bae6fd;
-  color: #082f49;
+  background: var(--brand-200);
+  color: var(--brand-900);
 }
+
+/* Focus ring ------------------------------------------------------------- */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: 8px;
+}
+
+/* Tabular numerals for stats ------------------------------------------- */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Display headings ----------------------------------------------------- */
+.display {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+
+/* Eyebrow / micro-label ------------------------------------------------ */
+.eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* Grid background for hero panels -------------------------------------- */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(16, 185, 129, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 185, 129, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.dot-bg {
+  background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+/* Subtle shimmer for the live pulse on the brand mark ------------------ */
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55); }
+  70%  { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+.pulse-ring { animation: pulse-ring 2.4s cubic-bezier(0.4,0,0.6,1) infinite; }
+
+/* Scrollbar polish (Webkit) ------------------------------------------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--ink-200); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-300); }
+::-webkit-scrollbar-track { background: transparent; }

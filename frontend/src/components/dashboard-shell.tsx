@@ -1,135 +1,116 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { clearAuthTokens, getProfile, getStoredAccessToken, getStoredUser } from "@/lib/api";
+import { clearAuthTokens, getProfile, getStoredAccessToken, getStoredRefreshToken, logoutRequest } from "@/lib/api";
+import { notifyAuthChange, useAuth } from "@/lib/auth";
+import { MobileNav, Sidebar, Topbar } from "@/components/ui/dashboard-nav";
+import { RequireRoute } from "@/lib/auth";
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: string;
-};
-
-const navItems: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: "◉" },
-  { href: "/dashboard/exams", label: "Examinations", icon: "▣" },
-  { href: "/dashboard/invigilators", label: "Invigilators", icon: "◎" },
-  { href: "/dashboard/reports", label: "Reports", icon: "◌" },
-  { href: "/dashboard/allocations", label: "Allocations", icon: "◍" },
-  { href: "/dashboard/incident", label: "Incidents", icon: "⚑" },
-];
-
-export function DashboardShell({
-  title,
-  actions,
-  children,
-}: {
+type DashboardShellProps = {
   title: string;
+  subtitle?: string;
   actions?: ReactNode;
   children: ReactNode;
-}) {
+};
+
+export function DashboardShell({ title, subtitle, actions, children }: DashboardShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [isReady, setIsReady] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [userName, setUserName] = useState("Operations team");
+  const { user, refresh: refreshAuth } = useAuth();
 
   useEffect(() => {
     const accessToken = getStoredAccessToken();
-    const storedUser = getStoredUser();
-
     if (!accessToken) {
       clearAuthTokens();
-      setIsAuthenticated(false);
-      setIsReady(true);
+      notifyAuthChange();
       router.replace("/login");
       return;
     }
 
-    setUserName(storedUser?.full_name || storedUser?.email || "Operations team");
-
+    // The context already has the cached user from localStorage; only
+    // re-fetch the profile when the access token is fresh. After the
+    // fetch, push the up-to-date user (with permissions) into the
+    // shared auth context so route guards see the right state.
     getProfile(accessToken)
       .then((profile) => {
-        setUserName(profile.full_name || profile.email || "Operations team");
-        setIsAuthenticated(true);
+        refreshAuth();
+        // Persist any newly-fetched fields back to storage so a
+        // subsequent reload doesn't re-fetch.
+        const stored = {
+          id: profile.id,
+          email: profile.email,
+          full_name: profile.full_name,
+          primary_role: profile.primary_role,
+          role: profile.role,
+          permissions: profile.permissions,
+          is_email_verified: profile.is_email_verified,
+          is_staff: profile.is_staff,
+        };
+        // saveAuthTokens also writes tokens; we re-use it to update
+        // the user object. The existing tokens are still valid for
+        // this request lifetime, but the access token may need a
+        // refresh; the 401 handler in api.ts will take care of that.
+        if (typeof window !== "undefined") {
+          localStorage.setItem("invigilo_user", JSON.stringify(stored));
+          notifyAuthChange();
+        }
       })
       .catch(() => {
         clearAuthTokens();
-        setIsAuthenticated(false);
+        notifyAuthChange();
         router.replace("/login");
       })
-      .finally(() => {
-        setIsReady(true);
-      });
+      .finally(() => setIsReady(true));
+    // We intentionally only run this on mount; subsequent navigation
+    // doesn't need a fresh profile.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
+
+  async function handleSignOut() {
+    const refresh = getStoredRefreshToken();
+    if (refresh) {
+      try {
+        await logoutRequest(refresh);
+      } catch {
+        // best-effort; clear locally regardless
+      }
+    }
+    clearAuthTokens();
+    notifyAuthChange();
+    router.replace("/login");
+  }
 
   if (!isReady) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm font-medium text-slate-600">
-        Verifying your session...
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex items-center gap-3 text-sm font-medium text-ink-500">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-brand-500" />
+          <span className="h-2 w-2 animate-pulse rounded-full bg-brand-500 [animation-delay:120ms]" />
+          <span className="h-2 w-2 animate-pulse rounded-full bg-brand-500 [animation-delay:240ms]" />
+          <span className="ml-2">Verifying your session…</span>
+        </div>
       </div>
     );
   }
 
-  if (!isAuthenticated) {
-    return null;
-  }
-
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="mx-auto flex min-h-screen max-w-7xl flex-col lg:flex-row">
-        <aside className="w-full border-b border-slate-200 bg-slate-950 px-6 py-6 text-slate-200 lg:w-72 lg:border-b-0 lg:border-r lg:px-5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-700 text-lg font-semibold text-white shadow-lg shadow-emerald-700/20">
-              I
-            </div>
-            <div>
-              <p className="text-lg font-semibold text-white">INVIGILO</p>
-              <p className="text-sm text-slate-400">Smart examination invigilation</p>
-            </div>
-          </div>
-
-          <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300">
-            <p className="font-medium text-white">Live command center</p>
-            <p className="mt-1">Signed in as {userName}</p>
-            <p className="mt-1">12 sessions active · 94% attendance</p>
-          </div>
-
-          <nav className="mt-8 space-y-1.5">
-            {navItems.map((item) => {
-              const isActive = pathname === item.href;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium transition ${
-                    isActive
-                      ? "bg-emerald-700 text-white shadow-lg shadow-emerald-700/20"
-                      : "text-slate-300 hover:bg-white/10 hover:text-white"
-                  }`}
-                >
-                  <span>{item.icon}</span>
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-        </aside>
-
-        <main className="flex-1 p-6 sm:p-8 lg:p-10">
-          <div className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white/80 p-5 shadow-sm backdrop-blur sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-emerald-700">
-                Examination operations center
-              </p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{title}</h1>
-            </div>
-            {actions}
-          </div>
-          <div className="mt-8">{children}</div>
-        </main>
+    <RequireRoute>
+      <div className="flex min-h-screen bg-background text-ink-900">
+        <Sidebar pathname={pathname} user={user} onSignOut={handleSignOut} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <MobileNav pathname={pathname} user={user} onSignOut={handleSignOut} />
+          <Topbar
+            user={user}
+            onSignOut={handleSignOut}
+            title={title}
+            subtitle={subtitle}
+            actions={actions}
+          />
+          <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">{children}</main>
+        </div>
       </div>
-    </div>
+    </RequireRoute>
   );
 }

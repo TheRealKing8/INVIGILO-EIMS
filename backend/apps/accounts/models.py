@@ -139,8 +139,11 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
         """Return the highest-precedence role code on the user.
 
         The order matches ``docs/03-use-cases.md`` §3 — SA wins over
-        everyone, then EO, DEA, HOD, IN. A user with multiple roles
-        (e.g. a HOD who is also an invigilator) gets the highest.
+        everyone, then EO, then the department-level roles
+        (FACULTY_DEAN, HEAD_OF_DEPARTMENT), then INVIGILATOR, then the
+        low-trust operational roles (SECURITY_OFFICER, STUDENT, GUEST).
+        A user with multiple roles (e.g. a HOD who is also an
+        invigilator) gets the highest.
         """
         order = (
             "SYSTEM_ADMINISTRATOR",
@@ -148,6 +151,9 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
             "FACULTY_DEAN",
             "HEAD_OF_DEPARTMENT",
             "INVIGILATOR",
+            "SECURITY_OFFICER",
+            "STUDENT",
+            "GUEST",
         )
         codes = set(self.roles().filter(is_active=True).values_list("code", flat=True))
         for code in order:
