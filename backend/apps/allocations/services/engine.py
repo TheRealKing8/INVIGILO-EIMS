@@ -64,6 +64,9 @@ from apps.allocations.models import Allocation, AllocationRun, Conflict
 logger = logging.getLogger("invigilo.allocations")
 
 
+logger = logging.getLogger("invigilo.allocations")
+
+
 # ---------------------------------------------------------------------------
 # Working data — pure Python, no DB, so the engine is easy to test in
 # isolation. (Production goes through the DB.)
@@ -133,19 +136,58 @@ def _build_candidates(period: ExamPeriod) -> list[_Candidate]:
     return candidates
 
 
-def _build_sessions(period: ExamPeriod, candidates: list[_Candidate]) -> list[_Session]:
-    """Order sessions and stamp each one with its initially-eligible set."""
+def _build_sessions(period: ExamPeriod, candidates: list[_Candidate]) -> tuple[list[_Session], list[Conflict]]:
+    """Order sessions and stamp each one with its initially-eligible set.
+
+    Returns the ordered list of sessions plus a list of pre-flight
+    conflicts (sessions the engine cannot attempt to place at all).
+    A session is pre-flighted out when its assigned room either does
+    not exist or has less capacity than the session's ``registered``
+    head-count. These show up on the conflict report so the EO can
+    rebook a bigger room or split the cohort, not silently disappear.
+    """
     sessions_qs = (
         ExamSession.objects.select_related("course", "room", "room__building")
         .filter(period=period)
         .order_by("-registered", "starts_at")
     )
     out: list[_Session] = []
+    pre_conflicts: list[Conflict] = []
     for s in sessions_qs:
+        if s.room_id is None:
+            pre_conflicts.append(
+                Conflict(
+                    run=None,
+                    type="no_room_capacity",
+                    severity="error",
+                    detail=(
+                        f"Session {s.course.code} @ {s.starts_at:%Y-%m-%d %H:%M} "
+                        f"has no room assigned; engine skipped it."
+                    ),
+                    session=s,
+                    invigilator=None,
+                )
+            )
+            continue
+        if s.registered > s.room.capacity:
+            pre_conflicts.append(
+                Conflict(
+                    run=None,
+                    type="no_room_capacity",
+                    severity="error",
+                    detail=(
+                        f"Session {s.course.code} @ {s.starts_at:%Y-%m-%d %H:%M} "
+                        f"registered={s.registered} exceeds room capacity={s.room.capacity}."
+                    ),
+                    session=s,
+                    invigilator=None,
+                )
+            )
+            continue
         required = max(1, s.invigilators_required or 1)
         eligible = [c for c in candidates if s.starts_at.date() not in c.unavailable_dates]
         out.append(_Session(obj=s, required=required, eligible=eligible))
-    return out
+    return out, pre_conflicts
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +287,7 @@ def run_engine(period: ExamPeriod, *, triggered_by=None) -> AllocationRun:
     """Run the engine against ``period``. Returns the persisted :class:`AllocationRun`."""
     started = time.monotonic()
     candidates = _build_candidates(period)
-    sessions = _build_sessions(period, candidates)
+    sessions, pre_conflicts = _build_sessions(period, candidates)
     workload: dict[int, int] = {}
     chosen_index: dict[int, list[_Session]] = {}
 
@@ -260,6 +302,9 @@ def run_engine(period: ExamPeriod, *, triggered_by=None) -> AllocationRun:
 
     # Persist.
     placed_slots = pass1.placed_slots + pass2.placed_slots
+    # total_required should include every session we attempted to fill
+    # (pre-flighted-out sessions don't count toward coverage, but they
+    # show up in conflicts so the EO still sees them).
     total_required = pass1.total_required
     sessions_placed = sum(1 for s in sessions if len(s.chosen) >= s.required)
     avg_workload = round(sum(workload.values()) / len(workload), 2) if workload else 0
@@ -269,7 +314,7 @@ def run_engine(period: ExamPeriod, *, triggered_by=None) -> AllocationRun:
     run = AllocationRun.objects.create(
         period=period,
         triggered_by=triggered_by,
-        sessions_total=total_required,
+        sessions_total=total_required + len(pre_conflicts),
         sessions_placed=sessions_placed,
         avg_workload=avg_workload,
         max_workload=max_workload,
@@ -293,9 +338,9 @@ def run_engine(period: ExamPeriod, *, triggered_by=None) -> AllocationRun:
     Allocation.objects.bulk_create(allocations)
 
     # Stamp the conflicts with the freshly-saved run, then persist.
-    for c in pass1.conflicts + pass2.conflicts:
+    for c in pass1.conflicts + pass2.conflicts + pre_conflicts:
         c.run = run
-    Conflict.objects.bulk_create(pass1.conflicts + pass2.conflicts)
+    Conflict.objects.bulk_create(pass1.conflicts + pass2.conflicts + pre_conflicts)
 
     return run
 

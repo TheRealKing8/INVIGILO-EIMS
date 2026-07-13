@@ -23,8 +23,9 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 const base =
   "inline-flex items-center justify-center gap-2 rounded-full font-semibold " +
-  "transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-60 " +
-  "select-none whitespace-nowrap";
+  "transition-all duration-200 hover:-translate-y-0.5 active:scale-95 " +
+  "disabled:cursor-not-allowed disabled:opacity-60 disabled:translate-y-0 " +
+  "disabled:active:scale-100 select-none whitespace-nowrap";
 
 const variants: Record<Variant, string> = {
   primary:

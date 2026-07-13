@@ -75,7 +75,7 @@ export default function Home() {
       {/* HEADER --------------------------------------------------------- */}
       <header className="border-b border-ink-200/70 bg-surface/80 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 sm:px-10 lg:px-12">
-          <BrandLockup size="md" variant="light" href="/" iconName="shield" />
+          <BrandLockup size="md" variant="dark" href="/" iconName="shield" />
           <nav className="hidden items-center gap-1 md:flex">
             {[
               { label: "Platform", href: "#capabilities" },
@@ -141,7 +141,7 @@ export default function Home() {
                 </Link>
                 <Link
                   href="#capabilities"
-                  className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-white px-6 text-base font-semibold text-ink-900 ring-1 ring-inset ring-ink-200 transition hover:bg-ink-100"
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-surface px-6 text-base font-semibold text-ink-900 ring-1 ring-inset ring-ink-200 transition hover:bg-ink-100"
                 >
                   Explore capabilities
                 </Link>
@@ -236,7 +236,7 @@ export default function Home() {
       </section>
 
       {/* LOGO STRIP ----------------------------------------------------- */}
-      <section className="border-y border-ink-200 bg-white/60">
+      <section className="border-y border-ink-200 bg-surface/60">
         <div className="mx-auto max-w-7xl px-6 py-8 sm:px-10 lg:px-12">
           <p className="text-center text-xs font-semibold uppercase tracking-[0.18em] text-ink-500">
             Trusted by examination offices at
@@ -385,7 +385,7 @@ export default function Home() {
             <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
               <Link
                 href="/register"
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-white px-6 text-base font-semibold text-brand-900 shadow-sm transition hover:bg-brand-50"
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-surface px-6 text-base font-semibold text-brand-700 shadow-sm transition hover:bg-ink-100"
               >
                 Request officer access
                 <Icon name="arrow-right" className="h-4 w-4" />
@@ -402,9 +402,9 @@ export default function Home() {
       </section>
 
       {/* FOOTER -------------------------------------------------------- */}
-      <footer className="border-t border-ink-200 bg-white/60">
+      <footer className="border-t border-ink-200 bg-surface/60">
         <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-4 px-6 py-8 sm:flex-row sm:items-center sm:px-10 lg:px-12">
-          <BrandLockup size="sm" variant="light" showSubtitle={false} />
+          <BrandLockup size="sm" variant="dark" showSubtitle={false} />
           <p className="text-xs text-ink-500">
             INVIGILO © 2026 · Examination operations for modern universities
           </p>

@@ -2,9 +2,10 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { clearAuthTokens, getProfile, getStoredAccessToken, getStoredRefreshToken, logoutRequest } from "@/lib/api";
+import { clearAuthTokens, getProfile, getStoredAccessToken, logoutRequest } from "@/lib/api";
 import { notifyAuthChange, useAuth } from "@/lib/auth";
 import { MobileNav, Sidebar, Topbar } from "@/components/ui/dashboard-nav";
+import { AiAssistantFab } from "@/components/ui/ai-assistant-fab";
 import { RequireRoute } from "@/lib/auth";
 
 type DashboardShellProps = {
@@ -69,13 +70,13 @@ export function DashboardShell({ title, subtitle, actions, children }: Dashboard
   }, [router]);
 
   async function handleSignOut() {
-    const refresh = getStoredRefreshToken();
-    if (refresh) {
-      try {
-        await logoutRequest(refresh);
-      } catch {
-        // best-effort; clear locally regardless
-      }
+    // The refresh token is delivered as an httpOnly cookie; the browser
+    // attaches it automatically when we POST to /api/v1/auth/logout/.
+    // We never had the raw value in JS, and we don't need it here.
+    try {
+      await logoutRequest();
+    } catch {
+      // best-effort; clear locally regardless
     }
     clearAuthTokens();
     notifyAuthChange();
@@ -111,6 +112,7 @@ export function DashboardShell({ title, subtitle, actions, children }: Dashboard
           <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">{children}</main>
         </div>
       </div>
+      <AiAssistantFab />
     </RequireRoute>
   );
 }

@@ -56,9 +56,17 @@ class HasPermission(BasePermission):
 
     The view may also expose a ``required_permissions`` list; both are
     combined.
+
+    Semantics: the user must hold **at least one** of the codenames
+    (``any``), not all of them. This is the right shape for a
+    permission set that lists alternatives — e.g. allow either
+    ``exam.session.crud`` (admin/officer) or ``exam.session.create``
+    (invigilator) to POST a new session. Use a different
+    permission class if you need ALL-of-codes semantics.
     """
 
     required_permissions: tuple[str, ...] = ()
+    require_all: bool = False
 
     @classmethod
     def with_codes(cls, *codes: str) -> type["HasPermission"]:
@@ -75,7 +83,9 @@ class HasPermission(BasePermission):
         codes = self.required_permissions or tuple(getattr(view, "required_permissions", ()))
         if not codes:
             return True
-        return all(user.has_permission(c) for c in codes)
+        if self.require_all:
+            return all(user.has_permission(c) for c in codes)
+        return any(user.has_permission(c) for c in codes)
 
 
 __all__ = ["HasPermission", "IsRole", "IsSuperAdmin", "IsAuthenticated"]

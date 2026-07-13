@@ -101,40 +101,46 @@ html {
 }
 
 /* ============================================================================
- * Dark theme — neutral inversion only; emerald brand is preserved.
+ * Dark theme — pure neutral dark; emerald brand is preserved.
  *
  * The theme is driven by `data-theme="dark"` on <html>, set by
  * <ThemeScript /> before paint and kept in sync by <ThemeProvider />.
  * Components stay on semantic classes (bg-surface, text-ink-900, etc.)
  * and CSS variables do the work below.
+ *
+ * Palette choice: **pure neutral dark** (zinc/neutral) rather than
+ * slate. Slate has a navy/blue cast that bleeds through the
+ * background, sidebar, and every nested surface. We use near-black
+ * neutral greys (#0a0a0a → #262626) so dark mode reads as a true dark
+ * theme, not a navy one.
  * ========================================================================== */
 [data-theme="dark"] {
   color-scheme: dark;
 
   /* Surfaces ------------------------------------------------------------- */
-  --background: #020617;          /* slate-950 — page background              */
-  --surface: #0f172a;             /* slate-900 — card / panel                 */
-  --surface-muted: #1e293b;       /* slate-800 — nested / table-stripe        */
-  --surface-dark: #022c22;        /* keep emerald-950 — sidebar / hero panel  */
-  --surface-darker: #011a14;
+  --background: #0a0a0a;          /* neutral-950 — page background (pure dark) */
+  --surface: #171717;             /* neutral-900 — card / panel                 */
+  --surface-muted: #262626;       /* neutral-800 — nested / table-stripe        */
+  --surface-dark: #022c22;        /* keep emerald-950 — sidebar / hero panel    */
+  --surface-darker: #011a14;      /* deepest accent surface                     */
 
   /* Ink ------------------------------------------------------------------ */
-  --ink-900: #f1f5f9;             /* primary text                              */
-  --ink-700: #cbd5e1;             /* secondary text                            */
-  --ink-500: #94a3b8;             /* muted text                                */
-  --ink-400: #64748b;             /* placeholder / disabled                    */
-  --ink-300: #334155;             /* dividers                                  */
-  --ink-200: #1e293b;             /* light dividers                            */
-  --ink-100: #0f172a;             /* subtle backgrounds                        */
+  --ink-900: #fafafa;             /* primary text                                */
+  --ink-700: #d4d4d4;             /* secondary text                              */
+  --ink-500: #a3a3a3;             /* muted text                                  */
+  --ink-400: #737373;             /* placeholder / disabled                      */
+  --ink-300: #525252;             /* dividers                                    */
+  --ink-200: #404040;             /* light dividers                              */
+  --ink-100: #262626;             /* subtle backgrounds                          */
 
   /* Effects -------------------------------------------------------------- */
   --ring: 0 0 0 3px rgba(16, 185, 129, 0.35);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30),
-                 0 8px 24px -12px rgba(0, 0, 0, 0.40);
-  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.30),
-                 0 2px 8px rgba(0, 0, 0, 0.20);
-  --shadow-elev: 0 4px 12px rgba(0, 0, 0, 0.40),
-                 0 24px 64px -16px rgba(0, 0, 0, 0.50);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.40),
+                 0 8px 24px -12px rgba(0, 0, 0, 0.50);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.40),
+                 0 2px 8px rgba(0, 0, 0, 0.30);
+  --shadow-elev: 0 4px 12px rgba(0, 0, 0, 0.50),
+                 0 24px 64px -16px rgba(0, 0, 0, 0.60);
 }
 
 /* The dark sidebar / hero panels (bg-surface-dark) sit on top of a dark

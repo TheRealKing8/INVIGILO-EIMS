@@ -65,6 +65,7 @@ LOCAL_APPS = [
     "apps.incidents",
     "apps.reports",
     "apps.audit",
+    "apps.ai",
 ]
 
 THIRD_PARTY_APPS = [
@@ -281,6 +282,21 @@ SIMPLE_JWT = {
     "ISSUER": env("JWT_ISSUER", default="invigilo"),
     "AUDIENCE": "invigilo-api",
 }
+
+# ----------------------------------------------------------------------------
+# Refresh-token cookie
+# ----------------------------------------------------------------------------
+# The refresh token is delivered as a Set-Cookie header (not a JSON field)
+# so the browser stores it as httpOnly and JavaScript can't read it. The
+# cookie's lifetime mirrors REFRESH_TOKEN_LIFETIME so it expires in lock
+# step with the JWT. ``Secure`` is on in production (DEBUG=False) and off
+# in development so the local http://127.0.0.1 flow still works.
+JWT_REFRESH_COOKIE_NAME = env("JWT_REFRESH_COOKIE_NAME", default="invigilo_rt")
+JWT_REFRESH_COOKIE_SAMESITE = env("JWT_REFRESH_COOKIE_SAMESITE", default="Lax")
+JWT_REFRESH_COOKIE_PATH = env("JWT_REFRESH_COOKIE_PATH", default="/")
+JWT_REFRESH_COOKIE_SECURE = not DEBUG
+JWT_REFRESH_COOKIE_DOMAIN = env("JWT_REFRESH_COOKIE_DOMAIN", default="")
+JWT_INCLUDE_REFRESH_IN_BODY = env.bool("JWT_INCLUDE_REFRESH_IN_BODY", default=False)
 
 # ----------------------------------------------------------------------------
 # drf-spectacular — OpenAPI

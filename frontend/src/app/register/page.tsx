@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { AuthShell } from "@/components/auth-shell";
 import { PasswordField } from "@/components/password-field";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { Icon } from "@/components/ui/icon";
 import { registerWithEmailPassword, saveAuthTokens } from "@/lib/api";
+import { validateRegister } from "@/lib/validation";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -16,27 +17,55 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  // Field-level client errors.
+  const [fullNameError, setFullNameError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [confirmPasswordError, setConfirmPasswordError] = useState<string | null>(null);
+  // Top-of-form banner for server errors (duplicate email, network, etc).
+  const [serverError, setServerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+
+  const validation = useMemo(
+    () => validateRegister(fullName, email, password, confirmPassword),
+    [fullName, email, password, confirmPassword],
+  );
+
+  function clearError(field: "fullName" | "email" | "password" | "confirm") {
+    if (field === "fullName" && fullNameError) setFullNameError(null);
+    if (field === "email" && emailError) setEmailError(null);
+    if (field === "password" && passwordError) setPasswordError(null);
+    if (field === "confirm" && confirmPasswordError) setConfirmPasswordError(null);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // Client-side match check — the backend still re-validates the
-    // password strength on its own; this is the "you typed two
-    // different passwords" guard.
-    if (password !== confirmPassword) {
-      setError("Passwords do not match. Please retype both fields.");
+    setSubmitAttempted(true);
+    setServerError(null);
+
+    // Run the full validator; mirror the per-field errors into state so the
+    // user sees them inline.
+    const v = validateRegister(fullName, email, password, confirmPassword);
+    setFullNameError(v.fullName);
+    setEmailError(v.email);
+    setPasswordError(v.password);
+    setConfirmPasswordError(v.confirmPassword);
+    if (!v.isValid) {
       return;
     }
-    setIsSubmitting(true);
-    setError(null);
 
+    setIsSubmitting(true);
     try {
       const data = await registerWithEmailPassword(fullName, email, password);
-      saveAuthTokens(data.access, data.refresh, data.user);
+      // The refresh token is delivered as an httpOnly cookie by the
+      // server; ``data.refresh`` is only present for non-browser
+      // clients (CLI, mobile, tests). We never read or persist it on
+      // the web — the cookie travels automatically on every request.
+      saveAuthTokens(data.access, data.user);
       router.push("/dashboard");
     } catch (err) {
-      setError(
+      setServerError(
         err instanceof Error
           ? err.message
           : "We couldn't create your account. Please review the details and try again.",
@@ -45,6 +74,12 @@ export default function RegisterPage() {
       setIsSubmitting(false);
     }
   }
+
+  // Only show inline errors after the first submit attempt.
+  const showFullNameError = submitAttempted ? fullNameError : null;
+  const showEmailError = submitAttempted ? emailError : null;
+  const showPasswordError = submitAttempted ? passwordError : null;
+  const showConfirmError = submitAttempted ? confirmPasswordError : null;
 
   return (
     <AuthShell
@@ -56,8 +91,12 @@ export default function RegisterPage() {
         headline: "From roster to report — in one workspace.",
       }}
     >
-      <form className="space-y-5" onSubmit={handleSubmit}>
-        {error ? <StatusBanner tone="danger" title="We couldn't create your account" children={error} /> : null}
+      <form className="space-y-5" onSubmit={handleSubmit} noValidate>
+        {serverError ? (
+          <StatusBanner tone="danger" title="We couldn't create your account">
+            {serverError}
+          </StatusBanner>
+        ) : null}
 
         <Input
           id="fullName"
@@ -66,10 +105,15 @@ export default function RegisterPage() {
           type="text"
           placeholder="Alicia Mugo"
           value={fullName}
-          onChange={(e) => setFullName(e.target.value)}
+          onChange={(e) => {
+            setFullName(e.target.value);
+            clearError("fullName");
+            if (serverError) setServerError(null);
+          }}
           autoComplete="name"
           required
           iconLeft="user"
+          error={showFullNameError ?? undefined}
         />
 
         <Input
@@ -79,36 +123,44 @@ export default function RegisterPage() {
           type="email"
           placeholder="name@university.edu"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            clearError("email");
+            if (serverError) setServerError(null);
+          }}
           autoComplete="email"
           required
           iconLeft="mail"
+          error={showEmailError ?? undefined}
         />
 
         <PasswordField
           id="password"
           label="Password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            clearError("password");
+            if (serverError) setServerError(null);
+          }}
           required
           autoComplete="new-password"
           hint="12+ characters, mixing at least three of: lowercase, uppercase, digit, symbol."
+          error={showPasswordError ?? undefined}
         />
 
         <PasswordField
           id="confirmPassword"
           label="Confirm password"
           value={confirmPassword}
-          onChange={(e) => setConfirmPassword(e.target.value)}
+          onChange={(e) => {
+            setConfirmPassword(e.target.value);
+            clearError("confirm");
+            if (serverError) setServerError(null);
+          }}
           required
           autoComplete="new-password"
-          // Mirror state — subtle warning when the user has typed
-          // both fields and they differ.
-          hint={
-            confirmPassword && confirmPassword !== password
-              ? "Passwords do not match yet."
-              : undefined
-          }
+          error={showConfirmError ?? undefined}
         />
 
         <Button
@@ -116,6 +168,7 @@ export default function RegisterPage() {
           size="lg"
           fullWidth
           loading={isSubmitting}
+          disabled={submitAttempted && !validation.isValid}
           iconRight={isSubmitting ? undefined : "check"}
         >
           {isSubmitting ? "Creating your account…" : "Create account"}

@@ -20,6 +20,7 @@ import { Icon } from "@/components/ui/icon";
 import { Badge } from "@/components/ui/badge";
 import { BrandMark } from "@/components/ui/brand";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { SearchPopover } from "@/components/search-popover";
 import type { AuthUser } from "@/lib/api";
 import { visibleNavItems, type RouteAccess } from "@/lib/route-config";
 
@@ -236,8 +237,11 @@ export function Topbar({
   actions?: React.ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const router = useRouter();
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const searchWrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
@@ -246,6 +250,23 @@ export function Topbar({
     if (menuOpen) document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [menuOpen]);
+
+  // Escape closes the popover, mirrors the menu's UX.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setSearchOpen(false);
+        setQuery("");
+      }
+    }
+    if (searchOpen) document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [searchOpen]);
+
+  function closeSearch() {
+    setSearchOpen(false);
+    setQuery("");
+  }
 
   return (
     <header className="sticky top-0 z-30 border-b border-ink-200 bg-surface/80 backdrop-blur">
@@ -259,16 +280,31 @@ export function Topbar({
           </h1>
         </div>
         <div className="flex items-center gap-3">
-          <div className="relative hidden md:block">
+          <div className="relative hidden md:block" ref={searchWrapRef}>
             <Icon
               name="search"
               className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400"
             />
             <input
+              id="topbar-search"
+              aria-label="Search exams, staff, and rooms"
               type="search"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setSearchOpen(true);
+              }}
+              onFocus={() => query.length >= 2 && setSearchOpen(true)}
               placeholder="Search exams, staff, rooms…"
               className="h-11 w-72 rounded-full border-0 bg-ink-100/60 pl-10 pr-4 text-sm text-ink-900 placeholder:text-ink-400 ring-1 ring-inset ring-ink-200 transition focus:bg-surface focus:ring-2 focus:ring-brand-500"
             />
+            {searchOpen && query.trim().length >= 2 ? (
+              <SearchPopover
+                query={query}
+                onClose={closeSearch}
+                containerRef={searchWrapRef}
+              />
+            ) : null}
           </div>
 
           <ThemeToggle />

@@ -80,6 +80,15 @@ export const ROUTE_ACCESS: ReadonlyArray<RouteAccess> = [
     ]),
   },
   {
+    href: "/dashboard/timetable",
+    label: "Timetable",
+    description: "Day-by-day view of all sessions",
+    icon: "calendar",
+    // Every authenticated user can see the timetable; the backend
+    // re-checks the data scope (e.g. students only see their own).
+    roles: DASHBOARD_ROLES,
+  },
+  {
     href: "/dashboard/invigilators",
     label: "Invigilators",
     description: "Roster, availability, workload",
@@ -129,7 +138,46 @@ export const ROUTE_ACCESS: ReadonlyArray<RouteAccess> = [
       "HEAD_OF_DEPARTMENT",
     ]),
   },
+  {
+    href: "/dashboard/audit",
+    label: "Audit log",
+    description: "Who changed what, and when",
+    icon: "shield",
+    // Only roles that can see (and act on) consequential changes.
+    // The backend independently re-checks ``audit.view``.
+    roles: new Set<RoleCode>([
+      "SYSTEM_ADMINISTRATOR",
+      "EXAMINATION_OFFICER",
+    ]),
+  },
+  {
+    href: "/dashboard/users",
+    label: "Users",
+    description: "All accounts, roles, password resets",
+    icon: "users",
+    // Backend independently re-checks ``accounts.user.create`` (for
+    // list/create/update) and the two elevated actions
+    // ``accounts.user.reset_password`` / ``accounts.role.assign`` (for
+    // the detail page). The route config is the UX layer that hides
+    // the entry for everyone except the SA.
+    roles: new Set<RoleCode>(["SYSTEM_ADMINISTRATOR"]),
+  },
 ];
+
+/**
+ * True for roles that operate the platform — the dashboard's
+ * "control-room" branch shows them the full org-wide KPIs. Everyone
+ * else (INVIGILATOR, SECURITY_OFFICER, STUDENT, GUEST) gets a
+ * role-specific slice.
+ */
+export function isOperationsRole(code: string | null | undefined): boolean {
+  return (
+    code === "SYSTEM_ADMINISTRATOR" ||
+    code === "EXAMINATION_OFFICER" ||
+    code === "HEAD_OF_DEPARTMENT" ||
+    code === "FACULTY_DEAN"
+  );
+}
 
 /** True if the user (by primary role) may access this exact route. */
 export function canAccessRoute(

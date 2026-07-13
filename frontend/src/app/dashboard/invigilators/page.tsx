@@ -15,6 +15,7 @@ import { ProgressBar, Sparkline } from "@/components/ui/viz";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getInvigilators, type InvigilatorProfile } from "@/lib/api";
 import { useFetch } from "@/lib/use-fetch";
+import { useRouter } from "next/navigation";
 
 function initialsOf(name: string | undefined): string {
   if (!name) return "??";
@@ -27,6 +28,7 @@ function initialsOf(name: string | undefined): string {
 }
 
 export default function InvigilatorsPage() {
+  const router = useRouter();
   const { data, isLoading, error, refresh } = useFetch(() =>
     getInvigilators({ page: 1, page_size: 50 }),
   );
@@ -101,7 +103,8 @@ export default function InvigilatorsPage() {
               {people.map((p: InvigilatorProfile) => (
                 <li
                   key={p.id}
-                  className="flex items-center gap-4 px-5 py-4 transition hover:bg-brand-50/30"
+                  className="flex cursor-pointer items-center gap-4 px-5 py-4 transition hover:bg-brand-50/30"
+                  onClick={() => router.push(`/dashboard/invigilators/${p.id}`)}
                 >
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-700 text-sm font-semibold text-white">
                     {initialsOf(p.user_full_name ?? p.user_email)}
@@ -127,7 +130,15 @@ export default function InvigilatorsPage() {
                   <Badge tone={p.is_active ? "success" : "neutral"} withDot>
                     {p.is_active ? "Active" : "Inactive"}
                   </Badge>
-                  <Button variant="ghost" size="sm" iconRight="chevron-right">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconRight="chevron-right"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(`/dashboard/invigilators/${p.id}`);
+                    }}
+                  >
                     Open
                   </Button>
                 </li>

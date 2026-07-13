@@ -13,7 +13,7 @@ import { DashboardShell } from "@/components/dashboard-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDark, CardHeader } from "@/components/ui/card";
-import { Icon } from "@/components/ui/icon";
+import { Icon, type IconName } from "@/components/ui/icon";
 import { ProgressBar } from "@/components/ui/viz";
 import { StatusBanner } from "@/components/ui/status-banner";
 import {
@@ -29,6 +29,7 @@ import {
   type Paginated,
 } from "@/lib/api";
 import { useFetch } from "@/lib/use-fetch";
+import { useRouter } from "next/navigation";
 
 const statusTone: Record<
   Allocation["status"],
@@ -69,6 +70,7 @@ function describeConflict(c: Conflict): string {
 }
 
 export default function AllocationsPage() {
+  const router = useRouter();
   const [engineState, setEngineState] = useState<"idle" | "running" | "error">("idle");
   const [engineError, setEngineError] = useState<string | null>(null);
 
@@ -238,6 +240,17 @@ export default function AllocationsPage() {
                 ? "The latest run placed every session cleanly. Run the engine again to re-validate."
                 : "Review each conflict and either re-run the engine or reassign invigilators manually."}
             </p>
+            {latestRun ? (
+              <Button
+                variant="light"
+                size="sm"
+                iconRight="arrow-right"
+                className="mt-4"
+                onClick={() => router.push(`/dashboard/allocations/${latestRun.id}`)}
+              >
+                View run details
+              </Button>
+            ) : null}
             {conflicts.length > 0 ? (
               <div className="mt-5 space-y-3">
                 {conflicts.slice(0, 3).map((c) => (
@@ -299,6 +312,32 @@ export default function AllocationsPage() {
                 <ProgressBar value={coverage} tone={coverage >= 95 ? "success" : "warning"} />
               </div>
             ) : null}
+          </Card>
+
+          <Card>
+            <CardHeader eyebrow="Rules" title="What the engine checks" />
+            <ul className="mt-4 space-y-2.5 text-sm text-ink-700">
+              {(
+                [
+                  { icon: "shield" as IconName, label: "No double-booking — one invigilator, one session at a time." },
+                  { icon: "users" as IconName, label: "Department mixing — no two invigilators in a session share a department." },
+                  { icon: "calendar" as IconName, label: "Availability — invigilators marked unavailable for the date are skipped." },
+                  { icon: "map-pin" as IconName, label: "Room capacity — sessions whose head-count exceeds the room are pre-flighted out." },
+                  { icon: "gauge" as IconName, label: "Workload cap — never exceed an invigilator's per-cycle maximum." },
+                  { icon: "lightning" as IconName, label: "Most-constrained first — heavy / under-resourced sessions get prioritised." },
+                ]
+              ).map((it) => (
+                <li key={it.label} className="flex items-start gap-2.5">
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-100">
+                    <Icon name={it.icon} className="h-3 w-3" />
+                  </span>
+                  <span className="leading-relaxed">{it.label}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 text-[11px] uppercase tracking-[0.14em] text-ink-400">
+              Rule-based · deterministic · AI will optimise the output in a later phase.
+            </p>
           </Card>
         </div>
       </div>

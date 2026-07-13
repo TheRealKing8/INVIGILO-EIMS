@@ -284,8 +284,36 @@ class PasswordReset(UUIDModel, TimestampedModel):
         return self.used_at is None and self.expires_at > timezone.now()
 
 
+class LoginOTP(UUIDModel, TimestampedModel):
+    """A one-time code for the second step of admin login.
+
+    The :class:`otp_token` is an opaque, random, *public* identifier —
+    it's the value returned to the client and used to look the row up
+    on the verify step. The :class:`code_hash` is the argon2id hash of
+    the 6-digit code itself, so a database leak doesn't expose the
+    codes. After five failed attempts or successful consumption, the
+    row is marked ``consumed_at`` so the same ``otp_token`` can never
+    be reused.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="login_otps"
+    )
+    otp_token = models.CharField(max_length=64, unique=True, db_index=True)
+    code_hash = models.CharField(max_length=255)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+
+    MAX_ATTEMPTS = 5
+
+    def is_usable(self) -> bool:
+        return self.consumed_at is None and self.expires_at > timezone.now()
+
+
 __all__ = [
     "EmailVerification",
+    "LoginOTP",
     "PasswordReset",
     "Permission",
     "RefreshToken",

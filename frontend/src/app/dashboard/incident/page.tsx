@@ -24,6 +24,7 @@ import {
   type Incident,
 } from "@/lib/api";
 import { useFetch } from "@/lib/use-fetch";
+import { useRouter } from "next/navigation";
 
 type Severity = Incident["severity"];
 type Status = Incident["status"];
@@ -65,6 +66,7 @@ function fmtTime(iso: string): string {
 }
 
 export default function IncidentPage() {
+  const router = useRouter();
   const [filter, setFilter] = useState<typeof filters[number]>(filters[0]);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftSeverity, setDraftSeverity] = useState<Severity>("medium");
@@ -214,7 +216,8 @@ export default function IncidentPage() {
                 return (
                   <li
                     key={i.id}
-                    className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 px-5 py-4 transition hover:bg-brand-50/30"
+                    className="grid cursor-pointer grid-cols-[auto_1fr_auto_auto] items-center gap-4 px-5 py-4 transition hover:bg-brand-50/30"
+                    onClick={() => router.push(`/dashboard/incident/${i.id}`)}
                   >
                     <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${sev.bg} ${sev.ring} ring-1 ring-inset`}>
                       <Icon name="alert" className="h-4 w-4 text-ink-700" />
@@ -228,16 +231,18 @@ export default function IncidentPage() {
                         {i.session_code ?? "No session"} · Reported by {i.reporter_email ?? "Anonymous"} · {fmtTime(i.reported_at)}
                       </p>
                     </div>
-                    <select
-                      value={i.status}
-                      onChange={(e) => void handleStatusChange(i.id, e.target.value as Status)}
-                      className="rounded-lg border border-ink-200 bg-surface px-2 py-1 text-xs text-ink-700 focus:border-brand-500 focus:outline-none"
-                    >
-                      <option value="open">Open</option>
-                      <option value="investigating">Investigating</option>
-                      <option value="escalated">Escalated</option>
-                      <option value="resolved">Resolved</option>
-                    </select>
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <select
+                        value={i.status}
+                        onChange={(e) => void handleStatusChange(i.id, e.target.value as Status)}
+                        className="rounded-lg border border-ink-200 bg-surface px-2 py-1 text-xs text-ink-700 focus:border-brand-500 focus:outline-none"
+                      >
+                        <option value="open">Open</option>
+                        <option value="investigating">Investigating</option>
+                        <option value="escalated">Escalated</option>
+                        <option value="resolved">Resolved</option>
+                      </select>
+                    </div>
                     <Badge tone={statusTone[i.status].tone} withDot>
                       {statusTone[i.status].label}
                     </Badge>

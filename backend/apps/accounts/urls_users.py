@@ -18,4 +18,18 @@ urlpatterns = [
     path("<uuid:pk>/", _bind("patch", "partial_update"), name="users-update"),
     path("<uuid:pk>/", _bind("delete", "destroy"), name="users-destroy"),
     path("<uuid:pk>/unlock/", _bind("post", "unlock"), name="users-unlock"),
+    # Elevated actions — the method-level permission split in
+    # ``UserViewSet.get_permissions`` tightens these to their own
+    # narrower codename. Listed here last so the routes above remain
+    # the primary list/create/retrieve/update/destroy surface.
+    path(
+        "<uuid:pk>/reset-password/",
+        _bind("post", "reset_password"),
+        name="users-reset-password",
+    ),
+    path(
+        "<uuid:pk>/set-roles/",
+        _bind("post", "set_roles"),
+        name="users-set-roles",
+    ),
 ]

@@ -67,4 +67,35 @@ def send_password_reset_email(self: Any, user_id: str, token: str) -> str:  # ty
     return "sent"
 
 
-__all__ = ["send_password_reset_email", "send_verification_email"]
+@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True, retry_backoff_max=600)
+def send_login_otp_email(self: Any, user_id: str, code: str) -> str:  # type: ignore[no-untyped-def]
+    """Send the login OTP code to the user's email.
+
+    The 6-digit code is the only secret; the user types it on the
+    second step of the admin login flow. We do not include a
+    clickable link because the whole point of OTP is the user
+    manually copying the code from their inbox into the app.
+    """
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning("send_login_otp_email: user %s not found", user_id)
+        return "missing_user"
+
+    send_mail(
+        subject="Your INVIGILO login code",
+        message=(
+            f"Hi {user.full_name},\n\n"
+            f"Your one-time login code is: {code}\n\n"
+            "Enter this code on the login screen to continue. "
+            "It expires in 10 minutes and can only be used once.\n\n"
+            "If you did not request this code, please change your password immediately."
+        ),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        fail_silently=False,
+    )
+    return "sent"
+
+
+__all__ = ["send_login_otp_email", "send_password_reset_email", "send_verification_email"]

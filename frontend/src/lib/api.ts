@@ -19,11 +19,28 @@ export type AuthUser = {
 
 export type AuthTokens = {
   access: string;
-  refresh: string;
+  /**
+   * The raw refresh token. The browser will normally NOT see this
+   * — the server sets it as an httpOnly cookie on login/register.
+   * The field is included in the response body for non-browser
+   * clients (CLI, mobile, tests) and when the server is configured
+   * with ``JWT_INCLUDE_REFRESH_IN_BODY=true``.
+   */
+  refresh?: string;
   access_lifetime_seconds?: number;
   refresh_lifetime_seconds?: number;
   user: AuthUser;
 };
+
+/**
+ * Discriminated union for the login response. The first step may
+ * return a token pair (most roles) OR a request to complete the
+ * OTP second step (currently SYSTEM_ADMINISTRATOR). The client
+ * branches on ``requires_otp`` to decide which view to show.
+ */
+export type LoginResult =
+  | { requires_otp: true; otp_token: string }
+  | AuthTokens;
 
 // ---------------------------------------------------------------------------
 // Domain types
@@ -89,6 +106,7 @@ export type InvigilatorProfile = {
   user: string;
   primary_department: string | null;
   primary_department_code?: string | null;
+  primary_department_name?: string | null;
   max_sessions_per_cycle: number;
   rating: string;
   user_email?: string;
@@ -160,13 +178,86 @@ export type Incident = {
   body: string;
   session: string | null;
   session_code?: string | null;
+  session_starts_at?: string | null;
+  room_code?: string | null;
   reporter: string | null;
   reporter_email?: string | null;
+  reporter_name?: string | null;
   severity: "low" | "medium" | "high" | "critical";
   status: "open" | "investigating" | "escalated" | "resolved";
   reported_at: string;
   resolved_at: string | null;
   resolved_by: string | null;
+  resolved_by_email?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type Room = {
+  id: string;
+  building: string;
+  building_code?: string | null;
+  building_name?: string | null;
+  code: string;
+  name: string;
+  capacity: number;
+  equipment?: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Course = {
+  id: string;
+  program: string;
+  program_code?: string | null;
+  program_name?: string | null;
+  code: string;
+  title: string;
+  credit_hours: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type RoleSummary = {
+  id: string;
+  code: string;
+  name: string;
+};
+
+export type User = {
+  id: string;
+  email: string;
+  full_name: string;
+  phone: string;
+  avatar_url: string;
+  time_zone: string;
+  is_active: boolean;
+  is_email_verified: boolean;
+  is_staff: boolean;
+  is_superuser: boolean;
+  last_login_at: string | null;
+  failed_login_count: number;
+  locked_until: string | null;
+  created_at: string;
+  updated_at: string;
+  primary_role: string | null;
+  roles: RoleSummary[];
+};
+
+export type AuditLog = {
+  id: string;
+  actor: string | null;
+  actor_email: string | null;
+  action: string;
+  target_type: string;
+  target_id: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  path: string;
+  method: string;
+  request_id: string | null;
+  created_at: string;
 };
 
 export type ReportExport = {
@@ -202,18 +293,12 @@ export type DashboardSummary = {
 // ---------------------------------------------------------------------------
 const STORAGE_KEYS = {
   access: "invigilo_access_token",
-  refresh: "invigilo_refresh_token",
   user: "invigilo_user",
 } as const;
 
-export function saveAuthTokens(
-  accessToken: string,
-  refreshToken: string,
-  user?: AuthUser,
-) {
+export function saveAuthTokens(accessToken: string, user?: AuthUser) {
   if (typeof window === "undefined") return;
   localStorage.setItem(STORAGE_KEYS.access, accessToken);
-  localStorage.setItem(STORAGE_KEYS.refresh, refreshToken);
   if (user) {
     localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(user));
   } else {
@@ -226,9 +311,14 @@ export function getStoredAccessToken() {
   return localStorage.getItem(STORAGE_KEYS.access);
 }
 
-export function getStoredRefreshToken() {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(STORAGE_KEYS.refresh);
+/**
+ * No-op retained for backward compatibility. The refresh token is now
+ * stored by the browser as an httpOnly cookie (``invigilo_rt``) and
+ * travels automatically on every request to the API. The frontend
+ * never sees or persists the raw value.
+ */
+export function getStoredRefreshToken(): string | null {
+  return null;
 }
 
 export function getStoredUser() {
@@ -245,7 +335,6 @@ export function getStoredUser() {
 export function clearAuthTokens() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(STORAGE_KEYS.access);
-  localStorage.removeItem(STORAGE_KEYS.refresh);
   localStorage.removeItem(STORAGE_KEYS.user);
 }
 
@@ -254,10 +343,19 @@ export function clearAuthTokens() {
 // On 401, attempts a single refresh; on second 401, clears tokens and
 // throws. The 401 callback (passed in by the client) handles redirecting
 // to /login so server-rendered routes don't end up in a redirect loop.
+//
+// The browser attaches the httpOnly ``invigilo_rt`` cookie on
+// /api/v1/auth/refresh/ and /api/v1/auth/logout/ so the server can
+// rotate or revoke it. All cross-origin requests to the API carry
+// ``credentials: 'include'`` for that reason.
 // ---------------------------------------------------------------------------
 let onUnauthenticated: (() => void) | null = null;
 export function setOnUnauthenticated(cb: () => void) {
   onUnauthenticated = cb;
+}
+
+function needsCredentials(path: string): boolean {
+  return path.startsWith("/api/v1/auth/");
 }
 
 async function rawRequest<T>(path: string, init: RequestInit, accessToken?: string): Promise<T> {
@@ -271,6 +369,7 @@ async function rawRequest<T>(path: string, init: RequestInit, accessToken?: stri
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers,
+    credentials: needsCredentials(path) ? "include" : init.credentials ?? "same-origin",
     cache: "no-store",
   });
   const contentType = response.headers.get("content-type") ?? "";
@@ -294,20 +393,18 @@ export async function requestWithAuth<T>(path: string, init: RequestInit = {}): 
     if (status !== 401 || !access) {
       throw err;
     }
-    // Try a refresh.
-    const refresh = getStoredRefreshToken();
-    if (!refresh) {
-      clearAuthTokens();
-      onUnauthenticated?.();
-      throw err;
-    }
+    // Try a refresh. The browser attaches the httpOnly cookie; the
+    // server rotates the cookie and returns a fresh access token.
     try {
-      const tokens = await rawRequest<{ access: string; refresh?: string }>(
+      const tokens = await rawRequest<{ access: string }>(
         "/api/v1/auth/refresh/",
-        { method: "POST", body: JSON.stringify({ refresh }) },
+        { method: "POST", body: JSON.stringify({}) },
       );
-      saveAuthTokens(tokens.access, tokens.refresh ?? refresh);
-      // Retry once.
+      // ``tokens.refresh`` may be present in non-browser responses, but
+      // the web client never reads it — the new refresh is in the
+      // rotated cookie, which travels automatically from now on.
+      saveAuthTokens(tokens.access);
+      // Retry once with the new access token.
       return await rawRequest<T>(path, init, tokens.access);
     } catch (refreshErr) {
       clearAuthTokens();
@@ -337,10 +434,27 @@ export async function getHealth() {
 export async function loginWithEmailPassword(
   email: string,
   password: string,
-): Promise<AuthTokens> {
-  return request<AuthTokens>("/api/v1/auth/login/", {
+): Promise<LoginResult> {
+  return request<LoginResult>("/api/v1/auth/login/", {
     method: "POST",
     body: JSON.stringify({ email, password }),
+  });
+}
+
+/**
+ * Complete the second step of an admin login.
+ *
+ * Returns the same shape as a normal login (token pair + user) on
+ * success. Throws on any failure (wrong code, expired token,
+ * exhausted attempts) so the caller can render a single error.
+ */
+export async function verifyLoginOtp(
+  otpToken: string,
+  code: string,
+): Promise<AuthTokens> {
+  return request<AuthTokens>("/api/v1/auth/verify-otp/", {
+    method: "POST",
+    body: JSON.stringify({ otp_token: otpToken, code }),
   });
 }
 
@@ -361,6 +475,22 @@ export async function getProfile(accessToken: string): Promise<AuthUser> {
   });
 }
 
+/**
+ * Same as :func:`getProfile` but uses the auth-aware ``requestWithAuth``
+ * so the access token comes from localStorage automatically. We use
+ * this on the dashboard home to re-read the live ``primary_role`` from
+ * the server — the value baked into the JWT at login time can drift
+ * out of sync after a role change (e.g. an admin demoted themselves
+ * via the new ``/dashboard/users/{id}/set-roles/`` endpoint while
+ * still signed in).
+ *
+ * The endpoint requires only ``IsAuthenticated``; a 401 here would
+ * mean the refresh cookie is gone and the SPA should sign out.
+ */
+export async function getMe(): Promise<AuthUser> {
+  return requestWithAuth<AuthUser>("/api/v1/auth/me/");
+}
+
 export async function requestPasswordReset(email: string): Promise<void> {
   await request<void>("/api/v1/auth/password/reset/", {
     method: "POST",
@@ -378,10 +508,12 @@ export async function confirmPasswordReset(
   });
 }
 
-export async function logoutRequest(refreshToken: string): Promise<void> {
+export async function logoutRequest(): Promise<void> {
+  // The browser attaches the httpOnly refresh cookie; the server
+  // revokes it and clears the cookie on the way out. No body needed.
   await request<void>("/api/v1/auth/logout/", {
     method: "POST",
-    body: JSON.stringify({ refresh: refreshToken }),
+    body: JSON.stringify({}),
   });
 }
 
@@ -398,12 +530,44 @@ function qs(params?: Record<string, string | number | boolean | undefined>): str
 // Exams
 export const getExamSessions = (params?: Record<string, string | number | undefined>) =>
   requestWithAuth<Paginated<ExamSession>>(`/api/v1/exams/sessions/${qs(params)}`);
+export const getExamSession = (id: string) =>
+  requestWithAuth<ExamSession>(`/api/v1/exams/sessions/${id}/`);
 export const getExamPeriods = (params?: Record<string, string | number | undefined>) =>
   requestWithAuth<Paginated<ExamPeriod>>(`/api/v1/exams/periods/${qs(params)}`);
 export const getActiveExamPeriod = () =>
   requestWithAuth<Paginated<ExamPeriod>>(
     `/api/v1/exams/periods/${qs({ is_active: "true", page_size: 1 })}`,
   ).then((p) => p.results[0] ?? null);
+
+// Courses
+export const getCourses = (params?: Record<string, string | number | undefined>) =>
+  requestWithAuth<Paginated<Course>>(`/api/v1/academic/courses/${qs(params)}`);
+
+/**
+ * Create an exam session. Returns the full session object on 201.
+ *
+ * Payload shape mirrors ExamSessionSerializer's writable fields; see
+ * `backend/apps/exams/serializers.py` for validation rules
+ * (starts_at < ends_at, course_unit must belong to course, etc.).
+ */
+export async function createExamSession(payload: {
+  period: string;
+  course: string;
+  course_unit?: string | null;
+  room?: string | null;
+  starts_at: string;
+  ends_at: string;
+  capacity: number;
+  registered?: number;
+  invigilators_required?: number;
+  status?: ExamSession["status"];
+  special_requirements?: string;
+}): Promise<ExamSession> {
+  return requestWithAuth<ExamSession>("/api/v1/exams/sessions/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
 
 /**
  * Lifecycle actions for an ExamSession. The backend enforces the
@@ -445,11 +609,63 @@ export async function rescheduleExamSession(
 export const getInvigilators = (params?: Record<string, string | number | undefined>) =>
   requestWithAuth<Paginated<InvigilatorProfile>>(`/api/v1/invigilators/profiles/${qs(params)}`);
 
+/**
+ * Per-date availability override for an invigilator. The default is
+ * "available" (no row); a row expresses "busy" / "off_duty" / "leave"
+ * for a particular date. The allocation engine filters candidates
+ * by combining ``profile.is_active``, ``profile.user.is_active`` and
+ * any matching ``Availability`` row for the session's date — see
+ * ``backend/apps/allocations/services/engine.py:115-130``.
+ */
+export type Availability = {
+  id: string;
+  invigilator: string;
+  invigilator_email?: string;
+  invigilator_name?: string;
+  date: string; // YYYY-MM-DD
+  status: "available" | "busy" | "off_duty" | "leave";
+  note: string;
+};
+
+export const getAvailability = (
+  params: Record<string, string | number | undefined>,
+) =>
+  requestWithAuth<Paginated<Availability>>(
+    `/api/v1/invigilators/availability/${qs(params)}`,
+  );
+
+/**
+ * Create or update an availability row. The backend enforces
+ * ``unique_together = (("invigilator", "date"))`` — a second POST
+ * for the same (invigilator, date) returns 400. The UI treats that
+ * as a refresh signal and re-fetches the current state.
+ */
+export const setAvailability = (payload: {
+  invigilator: string;
+  date: string;
+  status: Availability["status"];
+  note?: string;
+}): Promise<Availability> =>
+  requestWithAuth<Availability>("/api/v1/invigilators/availability/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
 // Allocations
 export const getAllocations = (params?: Record<string, string | number | undefined>) =>
   requestWithAuth<Paginated<Allocation>>(`/api/v1/allocations/allocations/${qs(params)}`);
 export const getAllocationRuns = (params?: Record<string, string | number | undefined>) =>
   requestWithAuth<Paginated<AllocationRun>>(`/api/v1/allocations/runs/${qs(params)}`);
+export const getAllocationRun = (id: string) =>
+  requestWithAuth<AllocationRun>(`/api/v1/allocations/runs/${id}/`);
+export const getAllocationsForRun = (runId: string) =>
+  requestWithAuth<Paginated<Allocation>>(
+    `/api/v1/allocations/allocations/${qs({ run: runId, page_size: 100 })}`,
+  );
+export const getAllocationForSession = (sessionId: string) =>
+  requestWithAuth<Paginated<Allocation>>(
+    `/api/v1/allocations/allocations/${qs({ session: sessionId, page_size: 50 })}`,
+  );
 export const getConflicts = (params?: Record<string, string | number | undefined>) =>
   requestWithAuth<Paginated<Conflict>>(`/api/v1/allocations/conflicts/${qs(params)}`);
 
@@ -463,6 +679,10 @@ export async function runAllocationEngine(periodId: string): Promise<AllocationR
 // Incidents
 export const getIncidents = (params?: Record<string, string | number | undefined>) =>
   requestWithAuth<Paginated<Incident>>(`/api/v1/incidents/${qs(params)}`);
+export const getIncidentsForSession = (sessionId: string) =>
+  requestWithAuth<Paginated<Incident>>(
+    `/api/v1/incidents/${qs({ session: sessionId, page_size: 50 })}`,
+  );
 
 export async function createIncident(payload: {
   title: string;
@@ -485,6 +705,26 @@ export async function updateIncidentStatus(
     body: JSON.stringify({ status }),
   });
 }
+
+export const getIncident = (id: string) =>
+  requestWithAuth<Incident>(`/api/v1/incidents/${id}/`);
+
+// Rooms
+export const getRooms = (params?: Record<string, string | number | undefined>) =>
+  requestWithAuth<Paginated<Room>>(`/api/v1/rooms/rooms/${qs(params)}`);
+export const getBuildings = (params?: Record<string, string | number | undefined>) =>
+  requestWithAuth<Paginated<Building>>(`/api/v1/rooms/buildings/${qs(params)}`);
+
+export type Building = {
+  id: string;
+  code: string;
+  name: string;
+  address?: string;
+  room_count?: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
 
 // Reports
 export const getReportExports = (params?: Record<string, string | number | undefined>) =>
@@ -518,14 +758,34 @@ export async function downloadReportExport(id: string): Promise<Blob> {
 // ---------------------------------------------------------------------------
 // Dashboard summary
 // ---------------------------------------------------------------------------
+/**
+ * Aggregate the five numbers behind the operations dashboard into a
+ * single object. Each sub-call is wrapped so a 200-with-empty-data
+ * or a 5xx doesn't kill the whole summary — but a 401/403 (stale
+ * JWT, recently-revoked role) DOES throw, so the dashboard can
+ * surface a "your role doesn't allow this view" banner instead of
+ * rendering a half-broken control room.
+ */
 export async function getDashboardSummary(): Promise<DashboardSummary> {
+  // The sub-call helper re-throws 401/403 so useFetch sees them. All
+  // other failures (network error, 5xx, parsing) collapse to ``null``
+  // — we'd rather show a degraded dashboard than a hard error.
+  const safe = async <T>(p: Promise<T>): Promise<T | null> => {
+    try {
+      return await p;
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 401 || status === 403) throw err;
+      return null;
+    }
+  };
   const [period, sessions, invigilators, runs, incidents, openIncidents] = await Promise.all([
-    getActiveExamPeriod().catch(() => null),
-    getExamSessions({ page_size: 5, ordering: "starts_at" }).catch(() => null),
-    getInvigilators({ page_size: 1 }).catch(() => null),
-    getAllocationRuns({ page_size: 5 }).catch(() => null),
-    getIncidents({ page_size: 5 }).catch(() => null),
-    getIncidents({ status: "open", page_size: 1 }).catch(() => null),
+    safe(getActiveExamPeriod()),
+    safe(getExamSessions({ page_size: 5, ordering: "starts_at" })),
+    safe(getInvigilators({ page_size: 1 })),
+    safe(getAllocationRuns({ page_size: 5 })),
+    safe(getIncidents({ page_size: 5 })),
+    safe(getIncidents({ status: "open", page_size: 1 })),
   ]);
   return {
     active_period: period,
@@ -536,4 +796,96 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     upcoming_sessions: sessions?.results ?? [],
     recent_incidents: incidents?.results ?? [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// AI assistant
+// ---------------------------------------------------------------------------
+export type AiChatContext = {
+  active_period: string | null;
+  upcoming_session_count: number;
+  open_conflict_count: number;
+  open_incident_count: number;
+  invigilator_total: number;
+  invigilator_unavailable_today: number;
+  latest_run_id: string | null;
+  latest_run_coverage: number | null;
+  generated_at: string;
+};
+
+export type AiChatReply = {
+  reply: string;
+  suggestions: string[];
+  intent: string;
+  context: AiChatContext;
+};
+
+/**
+ * Ask the AI assistant a free-form question. The assistant is fed live
+ * database data, so the reply is grounded in the actual state of the
+ * cycle rather than hallucinated.
+ */
+export async function postAiChat(message: string): Promise<AiChatReply> {
+  return requestWithAuth<AiChatReply>("/api/v1/ai/chat/", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Audit log — every consequential mutation is written by signals; this is
+// the read side. Filtered/paginated like the rest of the API.
+// ---------------------------------------------------------------------------
+export const getAuditLogs = (params?: Record<string, string | number | undefined>) =>
+  requestWithAuth<Paginated<AuditLog>>(`/api/v1/audit/${qs(params)}`);
+
+// ---------------------------------------------------------------------------
+// User management (admin only — backend gates with
+// ``accounts.user.create`` / ``accounts.user.reset_password`` /
+// ``accounts.role.assign``).
+// ---------------------------------------------------------------------------
+//
+// The list endpoint returns a flat array, not DRF's paginated wrapper,
+// so we type it as ``User[]`` directly. The backend's
+// ``UserViewSet.list`` is a thin ``objects.all().order_by("email")``
+// scan — fine for the seeded user counts, but we'll need real
+// pagination + a search field if this ever grows past a few hundred
+// users.
+export async function getUsers(
+  params?: Record<string, string | number | undefined>,
+): Promise<User[]> {
+  return requestWithAuth<User[]>(`/api/v1/users/${qs(params)}`);
+}
+
+export async function getUser(id: string): Promise<User> {
+  return requestWithAuth<User>(`/api/v1/users/${id}/`);
+}
+
+export async function adminResetUserPassword(
+  id: string,
+  newPassword: string,
+  confirmPassword: string,
+): Promise<void> {
+  await requestWithAuth<void>(`/api/v1/users/${id}/reset-password/`, {
+    method: "POST",
+    body: JSON.stringify({
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    }),
+  });
+}
+
+export async function setUserRoles(id: string, roleCodes: string[]): Promise<User> {
+  return requestWithAuth<User>(`/api/v1/users/${id}/set-roles/`, {
+    method: "POST",
+    body: JSON.stringify({ roles: roleCodes }),
+  });
+}
+
+export async function deleteUser(id: string): Promise<void> {
+  await requestWithAuth<void>(`/api/v1/users/${id}/`, { method: "DELETE" });
+}
+
+export async function unlockUserAccount(id: string): Promise<void> {
+  await requestWithAuth<void>(`/api/v1/users/${id}/unlock/`, { method: "POST" });
 }

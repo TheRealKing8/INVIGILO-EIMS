@@ -69,10 +69,10 @@ export function AuthShell({
   return (
     <div className="min-h-screen bg-background text-ink-900">
       <header className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-6 sm:px-10 lg:px-12">
-        <BrandLockup size="md" variant="light" href="/" iconName="shield" />
+        <BrandLockup size="md" variant="dark" href="/" iconName="shield" />
         <Link
           href="/"
-          className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-ink-700 ring-1 ring-inset ring-ink-200 transition hover:bg-ink-100"
+          className="inline-flex items-center gap-2 rounded-full bg-surface px-4 py-2 text-sm font-semibold text-ink-900 ring-1 ring-inset ring-ink-200 transition hover:bg-ink-100"
         >
           <Icon name="arrow-right" className="h-3.5 w-3.5 -rotate-180" />
           Home
@@ -143,7 +143,7 @@ export function AuthShell({
           <section className="bg-surface p-8 sm:p-10 lg:p-12">
             <div className="mx-auto w-full max-w-md">
               <div className="lg:hidden">
-                <BrandLockup size="md" variant="light" href="/" iconName="shield" />
+                <BrandLockup size="md" variant="dark" href="/" iconName="shield" />
               </div>
               <div className="mt-6 lg:mt-0">
                 <h2 className="display text-2xl font-semibold text-ink-900">
@@ -169,7 +169,7 @@ export function AuthShell({
         </div>
       </main>
 
-      <footer className="border-t border-ink-200/70 bg-white/60 px-6 py-5 text-center text-xs text-ink-500 backdrop-blur sm:px-10 lg:px-12">
+      <footer className="border-t border-ink-200/70 bg-surface/60 px-6 py-5 text-center text-xs text-ink-500 backdrop-blur sm:px-10 lg:px-12">
         {footerNote}
       </footer>
     </div>

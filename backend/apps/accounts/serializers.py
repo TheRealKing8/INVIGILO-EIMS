@@ -142,6 +142,66 @@ class EmailVerificationConfirmSerializer(serializers.Serializer):
     token = serializers.CharField(write_only=True)
 
 
+class LoginOTPVerifySerializer(serializers.Serializer):
+    """Body for POST /auth/verify-otp/.
+
+    ``otp_token`` is the opaque identifier returned by the login step;
+    ``code`` is the 6-digit secret the user received by email. Both
+    are required; we don't surface which is missing, to match the
+    service layer's "collapse all failures" policy.
+    """
+
+    otp_token = serializers.CharField(write_only=True)
+    code = serializers.CharField(write_only=True, min_length=6, max_length=6)
+
+
+class AdminPasswordResetSerializer(serializers.Serializer):
+    """Body for POST /api/v1/users/{id}/reset-password/.
+
+    The admin types the new password twice (to catch typos). The
+    server runs the full ``validate_password`` complexity check on
+    top of this — the ``min_length=12`` here is the cheapest sanity
+    gate, the validators do the real work.
+
+    We never echo the new password back in the response — it's
+    deliberately write-only and the field names are short to keep
+    audit logs compact.
+    """
+
+    new_password = serializers.CharField(write_only=True, min_length=12, max_length=128)
+    confirm_password = serializers.CharField(write_only=True, min_length=12, max_length=128)
+
+    def validate(self, attrs):  # type: ignore[no-untyped-def]
+        if attrs.get("new_password") != attrs.get("confirm_password"):
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+        return attrs
+
+
+class SetRolesSerializer(serializers.Serializer):
+    """Body for POST /api/v1/users/{id}/set-roles/.
+
+    Replaces the user's full role set with the given list. Unknown
+    role codes raise a 422; empty list means the user is left with
+    no roles (the caller is responsible for not stranding their own
+    admin account — the detail-page UI guards against that).
+    """
+
+    roles = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+    )
+
+    def validate_roles(self, value):  # type: ignore[no-untyped-def]
+        known = set(Role.objects.filter(is_active=True).values_list("code", flat=True))
+        unknown = [r for r in value if r not in known]
+        if unknown:
+            raise serializers.ValidationError(f"Unknown role code(s): {unknown}")
+        return list(value)
+
+
 class InvigiloTokenObtainPairSerializer(serializers.Serializer):
     """A drop-in replacement for SimpleJWT's default obtain-pair serializer.
 
@@ -165,10 +225,12 @@ class InvigiloTokenRefreshSerializer(TokenRefreshSerializer):
 
 
 __all__ = [
+    "AdminPasswordResetSerializer",
     "EmailVerificationConfirmSerializer",
     "EmailVerificationRequestSerializer",
     "InvigiloTokenObtainPairSerializer",
     "InvigiloTokenRefreshSerializer",
+    "LoginOTPVerifySerializer",
     "LoginSerializer",
     "LogoutSerializer",
     "PasswordChangeSerializer",
@@ -176,6 +238,7 @@ __all__ = [
     "PasswordResetRequestSerializer",
     "RefreshRequestSerializer",
     "RoleSerializer",
+    "SetRolesSerializer",
     "UserCreateSerializer",
     "UserSerializer",
     "UserUpdateSerializer",

@@ -7,12 +7,17 @@
  * Expanded: a proper chat panel that opens from the bottom-right with
  *   - a dark emerald header (matches the sidebar/Topbar dark surfaces)
  *   - a scrollable transcript (assistant bubbles on the left, user bubbles
- *     on the right) with suggested prompts at the bottom of an empty list
+ *     on the right) with reply-driven suggestion chips
+ *   - a per-message "What the AI saw" disclosure that renders the live
+ *     context payload so the user can audit what the reply was grounded in
  *   - a composer at the bottom with an auto-growing textarea + send button
  *
- * Stub backend: until a /api/v1/ai/chat/ endpoint exists, the assistant
- * answers locally with canned responses for the suggested prompts and a
- * generic fallback for free-form input. The hook point is marked TODO.
+ * The assistant is rule-based and live: every user message is POSTed to
+ * ``/api/v1/ai/chat/`` (see ``backend/apps/ai/services.py``). The reply is
+ * deterministic and cites real DB values from the active period, latest
+ * run, open conflicts, and invigilator pool. The four seed chips below
+ * the empty state are just hand-written prompts; once a chat starts the
+ * chip set is replaced by the backend's intent-driven suggestions.
  *
  * Accessibility:
  *   - role="dialog" + aria-label when open
@@ -35,8 +40,14 @@ import {
 } from "react";
 
 import { Icon } from "@/components/ui/icon";
+import { postAiChat, type AiChatContext } from "@/lib/api";
 
 type Sender = "user" | "assistant";
+
+type Suggestion = {
+  label?: string;
+  prompt: string;
+};
 
 type Message = {
   id: string;
@@ -44,43 +55,29 @@ type Message = {
   text: string;
   /** ISO timestamp; the UI formats it as a short time (HH:MM). */
   at: string;
+  /** Backend's intent classification, when the message is from the assistant. */
+  intent?: string;
+  /** Reply-driven suggestions — only present on assistant messages. */
+  suggestions?: string[];
+  /** Live context the assistant's reply was grounded in. */
+  context?: AiChatContext;
 };
 
-type Suggestion = {
-  label: string;
-  prompt: string;
-  reply: string;
-};
-
-const SUGGESTIONS: Suggestion[] = [
-  {
-    label: "Today's exams",
-    prompt: "What exams are scheduled for today?",
-    reply:
-      "Open the Examinations tab to see the live schedule for the current period. The Overview card on the dashboard shows the next sessions with date, time, room, and invigilator count.",
-  },
-  {
-    label: "Run allocations",
-    prompt: "How do I run the allocation engine?",
-    reply:
-      "Go to Allocations → click 'Run engine' against the active period. The engine respects workload caps, no double-booking, and cross-department pairing. Conflicts are recorded on the run.",
-  },
-  {
-    label: "Log an incident",
-    prompt: "How do I log an incident?",
-    reply:
-      "On the Incidents tab, click 'Log incident' — fill in the title, body, and severity. You can also update the status (open → investigating → escalated → resolved) inline on the row.",
-  },
-  {
-    label: "Export a report",
-    prompt: "Can I export a PDF report?",
-    reply:
-      "Yes. Open the Reports tab, click 'New export', pick a format (PDF, Excel, or CSV) and an audience. When generation finishes, hit 'Download' on the row to pull the file.",
-  },
+/**
+ * Seed prompts shown when the transcript is empty. These are the
+ * highest-signal questions a fresh user will ask; the real
+ * intent-driven chips come back from the backend on the first reply.
+ */
+const SEED_PROMPTS: Suggestion[] = [
+  { prompt: "What's the status of the current cycle?" },
+  { prompt: "What conflicts is the engine reporting?" },
+  { prompt: "Show today's sessions" },
+  { prompt: "How many invigilators are available today?" },
 ];
 
-const FALLBACK_REPLY =
-  "I'm a local assistant for now. Try one of the suggested prompts above, or open the relevant dashboard tab for live data.";
+/** Friendly fallback when the backend errors out. */
+const OFFLINE_REPLY =
+  "The assistant is offline right now. Check your network and try again in a moment.";
 
 const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -98,11 +95,31 @@ const formatTime = (iso: string) => {
   }
 };
 
+const formatContextTime = (iso: string) => {
+  try {
+    return new Date(iso).toLocaleString([], {
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+};
+
+/** Render a single context field in the disclosure list. */
+function contextRow(label: string, value: string | number | null): string {
+  return `${label}: ${value === null || value === "" ? "—" : String(value)}`;
+}
+
 export function AiAssistantFloating() {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [isThinking, setIsThinking] = useState(false);
+  /** The id of the assistant message whose "What the AI saw" panel is open. */
+  const [expandedContextId, setExpandedContextId] = useState<string | null>(null);
 
   const panelRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -146,18 +163,8 @@ export function AiAssistantFloating() {
     el.scrollTop = el.scrollHeight;
   }, [messages, isThinking]);
 
-  const replyFor = useCallback((input: string): string => {
-    const match = SUGGESTIONS.find(
-      (s) =>
-        s.prompt.toLowerCase() === input.trim().toLowerCase() ||
-        s.label.toLowerCase() === input.trim().toLowerCase(),
-    );
-    if (match) return match.reply;
-    return FALLBACK_REPLY;
-  }, []);
-
   const send = useCallback(
-    (text: string) => {
+    async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || isThinking) return;
       const userMessage: Message = {
@@ -169,39 +176,55 @@ export function AiAssistantFloating() {
       setMessages((prev) => [...prev, userMessage]);
       setDraft("");
       setIsThinking(true);
-      // TODO: POST /api/v1/ai/chat/ — until that endpoint exists, the
-      // assistant answers locally after a brief "thinking" beat.
-      window.setTimeout(() => {
+      try {
+        const reply = await postAiChat(trimmed);
         setMessages((prev) => [
           ...prev,
           {
             id: newId(),
             sender: "assistant",
-            text: replyFor(trimmed),
+            text: reply.reply,
             at: new Date().toISOString(),
+            intent: reply.intent,
+            suggestions: reply.suggestions,
+            context: reply.context,
           },
         ]);
+      } catch {
+        // Network or 5xx — surface a friendly bubble and re-enable the composer.
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: newId(),
+            sender: "assistant",
+            text: OFFLINE_REPLY,
+            at: new Date().toISOString(),
+            intent: "error",
+          },
+        ]);
+      } finally {
         setIsThinking(false);
-      }, 650);
+      }
     },
-    [isThinking, replyFor],
+    [isThinking],
   );
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    send(draft);
+    void send(draft);
   };
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      send(draft);
+      void send(draft);
     }
   };
 
   const clearTranscript = () => {
     setMessages([]);
     setDraft("");
+    setExpandedContextId(null);
   };
 
   const composerAriaLabel = useMemo(
@@ -237,7 +260,7 @@ export function AiAssistantFloating() {
                     aria-hidden
                     className="h-1.5 w-1.5 rounded-full bg-brand-400 pulse-ring"
                   />
-                  Smart help for exam operations
+                  Fed live from your database
                 </p>
               </div>
             </div>
@@ -287,23 +310,109 @@ export function AiAssistantFloating() {
                         <Icon name="sparkle" className="h-3.5 w-3.5" />
                       </span>
                     ) : null}
-                    <div
-                      className={
-                        m.sender === "user"
-                          ? "max-w-[78%] rounded-2xl rounded-br-md bg-brand-700 px-3.5 py-2.5 text-sm text-white shadow-sm shadow-brand-900/20"
-                          : "max-w-[78%] rounded-2xl rounded-bl-md bg-surface px-3.5 py-2.5 text-sm text-ink-900 ring-1 ring-ink-200"
-                      }
-                    >
-                      <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
-                      <p
+                    <div className="max-w-[78%]">
+                      <div
                         className={
                           m.sender === "user"
-                            ? "mt-1 text-right text-[10px] font-medium uppercase tracking-[0.14em] text-brand-100/70"
-                            : "mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-ink-400"
+                            ? "rounded-2xl rounded-br-md bg-brand-700 px-3.5 py-2.5 text-sm text-white shadow-sm shadow-brand-900/20"
+                            : "rounded-2xl rounded-bl-md bg-surface px-3.5 py-2.5 text-sm text-ink-900 ring-1 ring-ink-200"
                         }
                       >
-                        {formatTime(m.at)}
-                      </p>
+                        <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+                        <p
+                          className={
+                            m.sender === "user"
+                              ? "mt-1 text-right text-[10px] font-medium uppercase tracking-[0.14em] text-brand-100/70"
+                              : "mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-ink-400"
+                          }
+                        >
+                          {m.sender === "assistant" && m.intent
+                            ? `${formatTime(m.at)} · ${m.intent}`
+                            : formatTime(m.at)}
+                        </p>
+                      </div>
+
+                      {/* Reply-driven suggestion chips from the backend. */}
+                      {m.sender === "assistant" &&
+                      m.suggestions &&
+                      m.suggestions.length > 0 ? (
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {m.suggestions.map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() => void send(s)}
+                              className="rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-semibold text-brand-800 ring-1 ring-inset ring-brand-100 transition hover:bg-brand-100 hover:ring-brand-200"
+                            >
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {/* "What the AI saw" disclosure — only on assistant messages
+                          that came back with a context payload. */}
+                      {m.sender === "assistant" && m.context ? (
+                        <div className="mt-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedContextId(
+                                expandedContextId === m.id ? null : m.id,
+                              )
+                            }
+                            className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-400 transition hover:text-ink-700"
+                            aria-expanded={expandedContextId === m.id}
+                          >
+                            {expandedContextId === m.id
+                              ? "Hide context"
+                              : "What the AI saw"}
+                          </button>
+                          {expandedContextId === m.id ? (
+                            <div className="mt-1 rounded-xl bg-ink-100/70 p-2.5 text-[11px] leading-relaxed text-ink-700 ring-1 ring-inset ring-ink-200">
+                              {[
+                                contextRow(
+                                  "Active period",
+                                  m.context.active_period,
+                                ),
+                                contextRow(
+                                  "Upcoming sessions",
+                                  m.context.upcoming_session_count,
+                                ),
+                                contextRow(
+                                  "Open conflicts",
+                                  m.context.open_conflict_count,
+                                ),
+                                contextRow(
+                                  "Open incidents",
+                                  m.context.open_incident_count,
+                                ),
+                                contextRow(
+                                  "Invigilators",
+                                  m.context.invigilator_total,
+                                ),
+                                contextRow(
+                                  "Unavailable today",
+                                  m.context.invigilator_unavailable_today,
+                                ),
+                                contextRow(
+                                  "Latest run coverage",
+                                  m.context.latest_run_coverage === null
+                                    ? null
+                                    : `${Math.round(
+                                        m.context.latest_run_coverage * 100,
+                                      )}%`,
+                                ),
+                                `Generated at: ${formatContextTime(
+                                  m.context.generated_at,
+                                )}`,
+                              ].map((line) => (
+                                <p key={line.split(":")[0]}>{line}</p>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   </li>
                 ))}
@@ -338,8 +447,8 @@ export function AiAssistantFloating() {
                   Hi, I&apos;m here to help.
                 </p>
                 <p className="mt-1 max-w-[260px] text-xs leading-relaxed text-ink-500">
-                  Ask about exams, allocations, reports, or incident handling. Or
-                  start with a prompt below.
+                  Ask about exams, allocations, conflicts, or incident
+                  handling. Replies cite the live state of your database.
                 </p>
               </div>
             )}
@@ -348,16 +457,16 @@ export function AiAssistantFloating() {
           {/* Suggested prompts (shown until the user has chatted) */}
           {!hasMessages ? (
             <div className="border-t border-ink-100 bg-surface px-4 py-3">
-              <p className="eyebrow mb-2 text-ink-500">Suggested</p>
+              <p className="eyebrow mb-2 text-ink-500">Try asking</p>
               <div className="flex flex-wrap gap-2">
-                {SUGGESTIONS.map((s) => (
+                {SEED_PROMPTS.map((s) => (
                   <button
-                    key={s.label}
+                    key={s.prompt}
                     type="button"
-                    onClick={() => send(s.prompt)}
+                    onClick={() => void send(s.prompt)}
                     className="rounded-full bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-800 ring-1 ring-inset ring-brand-100 transition hover:bg-brand-100 hover:ring-brand-200"
                   >
-                    {s.label}
+                    {s.prompt}
                   </button>
                 ))}
               </div>

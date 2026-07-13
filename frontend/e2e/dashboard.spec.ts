@@ -29,6 +29,21 @@ async function signInOrSkip(page: import("@playwright/test").Page): Promise<bool
   await page.locator('input[type="password"]').fill(PASSWORD);
   await page.getByRole("button", { name: /continue to dashboard|sign in|log in/i }).click();
   try {
+    // If the server returns requires_otp, fill any 6-digit code the
+    // dev console email backend may have printed. In a real test
+    // environment the backend is usually skipped, so this branch
+    // rarely fires — but we handle it so the e2e isn't hardcoded to
+    // a non-admin user.
+    const otpInput = page.locator('input[id^="otp-"]').first();
+    if (await otpInput.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      // We don't have a real code. Type 000000 — if the OTP fallback
+      // env var is set, this is the dev shortcut. Otherwise the
+      // verify call fails and the test is skipped.
+      for (let i = 0; i < 6; i++) {
+        await page.locator(`#otp-${i}`).fill("0");
+      }
+      await page.getByRole("button", { name: /verify and continue/i }).click();
+    }
     await page.waitForURL(/\/dashboard/, { timeout: 8_000 });
     signedIn = true;
     return true;
@@ -53,4 +68,141 @@ test.describe("Dashboard module pages (live)", () => {
       await expect(page.getByText(/could not load/i)).toHaveCount(0);
     });
   }
+
+  test("invigilator profile page renders the 14-day availability grid", async ({ page }) => {
+    const ok = await signInOrSkip(page);
+    if (!ok) {
+      test.skip(true, `Could not sign in as ${EMAIL}; skipping live module smoke.`);
+      return;
+    }
+    // Resolve a real invigilator id from the roster page.
+    await page.goto("/dashboard/invigilators");
+    const firstRow = page.locator("ul > li").first();
+    if ((await firstRow.count()) === 0) {
+      test.skip(true, "No invigilators in roster; skipping profile smoke.");
+      return;
+    }
+    await firstRow.click();
+    await page.waitForURL(/\/dashboard\/invigilators\/[^/]+$/, { timeout: 8_000 });
+    // The 14-day grid is the unique signature of the profile page.
+    // We assert that at least 14 day tiles are visible.
+    const tiles = page.locator(
+      'button:has(span:text-matches("^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$", "i"))',
+    );
+    await expect(tiles.first()).toBeVisible({ timeout: 10_000 });
+    expect(await tiles.count()).toBeGreaterThanOrEqual(14);
+    // The legend should be present so the user knows the status colours.
+    await expect(page.getByText(/legend:/i)).toBeVisible();
+  });
+
+  test("exam session detail page renders after row click", async ({ page }) => {
+    const ok = await signInOrSkip(page);
+    if (!ok) {
+      test.skip(true, `Could not sign in as ${EMAIL}; skipping live module smoke.`);
+      return;
+    }
+    await page.goto("/dashboard/exams");
+    const firstRow = page.locator("table tbody tr").first();
+    if ((await firstRow.count()) === 0) {
+      test.skip(true, "No exam sessions on the list; skipping detail smoke.");
+      return;
+    }
+    await firstRow.click();
+    await page.waitForURL(/\/dashboard\/exams\/[^/]+$/, { timeout: 8_000 });
+    // The detail page renders the "Back to examinations" link as its
+    // primary exit — that's the unique signature.
+    await expect(
+      page.getByRole("button", { name: /back to examinations/i }),
+    ).toBeVisible();
+    // And it shows the staffing card.
+    await expect(page.getByText(/assigned invigilators/i)).toBeVisible();
+  });
+
+  test("allocation run detail page renders after View run details click", async ({ page }) => {
+    const ok = await signInOrSkip(page);
+    if (!ok) {
+      test.skip(true, `Could not sign in as ${EMAIL}; skipping live module smoke.`);
+      return;
+    }
+    await page.goto("/dashboard/allocations");
+    const viewLink = page.getByRole("button", { name: /view run details/i });
+    if ((await viewLink.count()) === 0) {
+      test.skip(true, "No allocation runs yet; skipping run detail smoke.");
+      return;
+    }
+    await viewLink.first().click();
+    await page.waitForURL(/\/dashboard\/allocations\/[^/]+$/, { timeout: 8_000 });
+    // The run detail page is identified by the "Triggered by" stat row
+    // and the "Per-session allocations" header.
+    await expect(page.getByText(/triggered by/i).first()).toBeVisible();
+    await expect(page.getByText(/per-session allocations/i)).toBeVisible();
+  });
+
+  test("audit log page loads", async ({ page }) => {
+    const ok = await signInOrSkip(page);
+    if (!ok) {
+      test.skip(true, `Could not sign in as ${EMAIL}; skipping live module smoke.`);
+      return;
+    }
+    await page.goto("/dashboard/audit");
+    // The audit page has a "Recent events" header and a "Target type" filter.
+    await expect(
+      page.getByRole("heading", { name: /audit log/i }).first(),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/recent events/i).first()).toBeVisible();
+    // Either rows are visible OR the empty-state message is shown.
+    const emptyState = page.getByText(/no audit events match/i);
+    const firstRow = page.locator("ul > li").first();
+    if ((await firstRow.count()) === 0) {
+      await expect(emptyState).toBeVisible();
+    }
+  });
+
+  test("incident detail page renders after row click", async ({ page }) => {
+    const ok = await signInOrSkip(page);
+    if (!ok) {
+      test.skip(true, `Could not sign in as ${EMAIL}; skipping live module smoke.`);
+      return;
+    }
+    await page.goto("/dashboard/incident");
+    const firstRow = page.locator("ul > li").first();
+    if ((await firstRow.count()) === 0) {
+      test.skip(true, "No incidents on the feed; skipping detail smoke.");
+      return;
+    }
+    await firstRow.click();
+    await page.waitForURL(/\/dashboard\/incident\/[^/]+$/, { timeout: 8_000 });
+    // The detail page renders the "Back to incidents" link as its
+    // primary exit — that's the unique signature.
+    await expect(
+      page.getByRole("button", { name: /back to incidents/i }),
+    ).toBeVisible();
+    // And it shows the body / description card.
+    await expect(page.getByText(/what was reported/i)).toBeVisible();
+  });
+
+  test("topbar search shows live results", async ({ page }) => {
+    const ok = await signInOrSkip(page);
+    if (!ok) {
+      test.skip(true, `Could not sign in as ${EMAIL}; skipping live module smoke.`);
+      return;
+    }
+    await page.goto("/dashboard");
+    const search = page.getByPlaceholder(/search exams, staff, rooms/i);
+    await search.click();
+    // Type a query long enough to trigger the popover. We don't care
+    // what comes back — only that at least one of the three groups
+    // surfaces.
+    await search.fill("test");
+    // The popover renders group section labels; the backend may match
+    // an exam, an invigilator, or a room by the literal "test". If
+    // nothing matches, the empty state renders instead.
+    const examsGroup = page.getByText(/^exams$/i).first();
+    const invGroup = page.getByText(/^invigilators$/i).first();
+    const roomsGroup = page.getByText(/^rooms$/i).first();
+    const empty = page.getByText(/no results for/i).first();
+    await expect(
+      examsGroup.or(invGroup).or(roomsGroup).or(empty).first(),
+    ).toBeVisible({ timeout: 8_000 });
+  });
 });

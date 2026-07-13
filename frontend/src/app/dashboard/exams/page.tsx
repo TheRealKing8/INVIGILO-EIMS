@@ -36,6 +36,7 @@ import {
   type Paginated,
 } from "@/lib/api";
 import { useFetch } from "@/lib/use-fetch";
+import { useRouter } from "next/navigation";
 
 const statusTone: Record<
   ExamSession["status"],
@@ -101,6 +102,7 @@ function availableActions(status: ExamSession["status"]): Array<{
 }
 
 export default function ExamsPage() {
+  const router = useRouter();
   const [page] = useState(1);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -167,7 +169,12 @@ export default function ExamsPage() {
           >
             Refresh
           </Button>
-          <Button variant="primary" size="md" iconLeft="plus">
+          <Button
+            variant="primary"
+            size="md"
+            iconLeft="plus"
+            onClick={() => router.push("/dashboard/exams/new")}
+          >
             New exam
           </Button>
         </>
@@ -242,7 +249,11 @@ export default function ExamsPage() {
                   const actions = availableActions(e.status);
                   const isPending = pendingId === e.id;
                   return (
-                    <tr key={e.id} className="transition hover:bg-brand-50/30">
+                    <tr
+                      key={e.id}
+                      className="cursor-pointer transition hover:bg-brand-50/30"
+                      onClick={() => router.push(`/dashboard/exams/${e.id}`)}
+                    >
                       <td className="px-5 py-4 align-top">
                         <span className="rounded-md bg-ink-100 px-2 py-1 font-mono text-xs font-semibold text-ink-700">
                           {e.course_code ?? "—"}
@@ -303,7 +314,10 @@ export default function ExamsPage() {
                         </Badge>
                       </td>
                       <td className="px-5 py-4 align-top text-right">
-                        <div className="flex flex-col items-end gap-1.5">
+                        <div
+                          className="flex flex-col items-end gap-1.5"
+                          onClick={(ev) => ev.stopPropagation()}
+                        >
                           {actions.length > 0 ? (
                             actions.map((a) => (
                               <Button

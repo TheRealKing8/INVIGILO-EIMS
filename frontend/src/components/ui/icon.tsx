@@ -26,6 +26,7 @@ export type IconName =
   | "eye"
   | "eye-off"
   | "arrow-right"
+  | "arrow-left"
   | "arrow-up-right"
   | "arrow-down-right"
   | "chevron-right"
@@ -45,6 +46,7 @@ export type IconName =
   | "refresh"
   | "thumbs-up"
   | "thumbs-down"
+  | "gauge"
   | "sun"
   | "moon"
   | "monitor";
@@ -146,6 +148,11 @@ const paths: Record<IconName, ReactElement> = {
       <path d="M5 12h14M12 5l7 7-7 7" />
     </>
   ),
+  "arrow-left": (
+    <>
+      <path d="M19 12H5M12 19l-7-7 7-7" />
+    </>
+  ),
   "arrow-up-right": (
     <>
       <path d="M7 17 17 7M7 7h10v10" />
@@ -245,6 +252,14 @@ const paths: Record<IconName, ReactElement> = {
     <>
       <rect x="2" y="3" width="20" height="14" rx="2" />
       <path d="M8 21h8M12 17v4" />
+    </>
+  ),
+  gauge: (
+    <>
+      <path d="M12 14 7 9" />
+      <path d="M12 14a2 2 0 1 1-2-2" />
+      <path d="M12 22a10 10 0 1 1 10-10" />
+      <path d="M22 12a10 10 0 0 0-10-10v0" />
     </>
   ),
 };

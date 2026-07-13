@@ -27,14 +27,17 @@ from apps.core.permissions import HasPermission
 from . import services
 from .models import User
 from .serializers import (
+    AdminPasswordResetSerializer,
     EmailVerificationConfirmSerializer,
     EmailVerificationRequestSerializer,
+    LoginOTPVerifySerializer,
     LoginSerializer,
     LogoutSerializer,
     PasswordChangeSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RefreshRequestSerializer,
+    SetRolesSerializer,
     UserCreateSerializer,
     UserSerializer,
     UserUpdateSerializer,
@@ -55,27 +58,88 @@ class AuthViewSet(viewsets.ViewSet):
 
     @extend_schema(
         request=LoginSerializer,
-        responses={200: OpenApiResponse(description="Token pair + user")},
+        responses={
+            200: OpenApiResponse(
+                description=(
+                    "Either a token pair (refresh set as httpOnly cookie) OR "
+                    "{requires_otp: true, otp_token: '...'} when the user is "
+                    "an admin and must complete the second step."
+                )
+            )
+        },
     )
     def login(self, request: Any) -> Response:
-        """Exchange email + password for an access + refresh pair."""
+        """Exchange email + password for an access + refresh pair.
+
+        For users that must complete the OTP second step (currently
+        any SYSTEM_ADMINISTRATOR), this returns
+        ``{requires_otp: true, otp_token: '...'}`` with no JWT pair.
+        The client posts ``{otp_token, code}`` to ``/auth/verify-otp/``
+        to complete the login.
+
+        The refresh token is delivered as an ``invigilo_rt`` httpOnly
+        cookie on the response. The access token is in the JSON body
+        for the client to put in ``Authorization: Bearer …``.
+        """
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = services.auth.authenticate(
             email=serializer.validated_data["email"],
             password=serializer.validated_data["password"],
         )
-        return Response(
-            services.auth.issue_token_pair(user, request=request),
-            status=status.HTTP_200_OK,
+        if services.auth.requires_login_otp(user):
+            otp_token, code = services.auth.issue_login_otp(user)
+            # Fire-and-forget email send. We don't block the response
+            # on the SMTP round-trip; the user's already been told
+            # to expect a code.
+            from .tasks import send_login_otp_email
+
+            send_login_otp_email.delay(str(user.id), code)
+            return Response(
+                {"requires_otp": True, "otp_token": otp_token},
+                status=status.HTTP_200_OK,
+            )
+        response = Response(status=status.HTTP_200_OK)
+        response.data = services.auth.issue_token_pair(user, request=request, response=response)
+        return response
+
+    @extend_schema(
+        request=LoginOTPVerifySerializer,
+        responses={200: OpenApiResponse(description="Token pair (refresh set as httpOnly cookie)")},
+    )
+    def verify_otp(self, request: Any) -> Response:
+        """Complete the second step of an admin login.
+
+        Accepts ``{otp_token, code}`` from the first step. On success,
+        issues the same access + refresh pair a normal login would.
+        On any failure (wrong code, expired token, exhausted attempts,
+        unknown token) returns a 400 with an opaque ``detail`` so the
+        client can't distinguish failure modes.
+        """
+        serializer = LoginOTPVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = services.auth.consume_login_otp(
+            serializer.validated_data["otp_token"],
+            serializer.validated_data["code"],
         )
+        if user is None:
+            return Response(
+                {"detail": "Invalid or expired code."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        response = Response(status=status.HTTP_200_OK)
+        response.data = services.auth.issue_token_pair(user, request=request, response=response)
+        return response
 
     @extend_schema(
         request=UserCreateSerializer,
-        responses={201: OpenApiResponse(description="User created + token pair")},
+        responses={201: OpenApiResponse(description="User created + token pair (refresh as cookie)")},
     )
     def register(self, request: Any) -> Response:
-        """Create a user account and immediately issue a token pair."""
+        """Create a user account and immediately issue a token pair.
+
+        The refresh token is set as an httpOnly cookie on the response.
+        """
         serializer = UserCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         password = serializer.validated_data.pop("password", None) or None
@@ -86,31 +150,65 @@ class AuthViewSet(viewsets.ViewSet):
             is_email_verified=True,
             **serializer.validated_data,
         )
-        return Response(
-            services.auth.issue_token_pair(user, request=request),
-            status=status.HTTP_201_CREATED,
-        )
+        response = Response(status=status.HTTP_201_CREATED)
+        response.data = services.auth.issue_token_pair(user, request=request, response=response)
+        return response
 
     @extend_schema(
         request=RefreshRequestSerializer,
-        responses={200: OpenApiResponse(description="New token pair")},
+        responses={200: OpenApiResponse(description="New token pair (refresh rotated as cookie)")},
     )
     def refresh(self, request: Any) -> Response:
-        """Rotate a refresh token, returning a new pair."""
-        serializer = RefreshRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        return Response(
-            services.auth.rotate_refresh(serializer.validated_data["refresh"]),
-            status=status.HTTP_200_OK,
-        )
+        """Rotate a refresh token, returning a new pair.
+
+        Reads the refresh from the ``invigilo_rt`` cookie if present,
+        otherwise from the request body. Sets a new cookie on the
+        response so the browser's refresh is silently rotated. The
+        body is accepted for non-browser clients (CLI, mobile) and
+        for tests.
+        """
+        from .services.auth import read_refresh_from_request
+
+        raw = read_refresh_from_request(request)
+        if not raw and isinstance(request.data, dict):
+            # Tolerate an empty body when the cookie already carried
+            # the refresh; otherwise accept the body for non-browser
+            # clients. A 400 if neither is present.
+            raw = request.data.get("refresh") or None
+        if not raw:
+            return Response(
+                {"detail": "Refresh token missing. Provide the invigilo_rt cookie or a 'refresh' body field."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        response = Response(status=status.HTTP_200_OK)
+        response.data = services.auth.rotate_refresh(raw, request=request, response=response)
+        return response
 
     @extend_schema(request=LogoutSerializer, responses={204: None})
     def logout(self, request: Any) -> Response:
-        """Revoke the supplied refresh token."""
-        serializer = LogoutSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        services.auth.revoke_refresh(serializer.validated_data.get("refresh", ""))
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        """Revoke the supplied refresh token and clear the cookie.
+
+        The refresh can come from the cookie or the body. Either way
+        the cookie is cleared on the way out so the browser drops it.
+        An empty body is fine when the cookie carried the refresh.
+        """
+        from .services.auth import read_refresh_from_request, revoke_refresh, clear_refresh_cookie
+
+        cookie_refresh = read_refresh_from_request(request)
+        body_refresh: str = ""
+        if isinstance(request.data, dict):
+            raw_body = request.data.get("refresh")
+            if isinstance(raw_body, str):
+                body_refresh = raw_body
+        raw = body_refresh or cookie_refresh or ""
+        if raw:
+            revoke_refresh(raw)
+        response = Response(status=status.HTTP_204_NO_CONTENT)
+        # Always clear the cookie on logout, even if the body carried
+        # the token. The browser doesn't need to keep it.
+        if cookie_refresh:
+            clear_refresh_cookie(response)
+        return response
 
     @extend_schema(
         request=EmailVerificationRequestSerializer,
@@ -191,10 +289,26 @@ class AuthViewSet(viewsets.ViewSet):
 
     @extend_schema(responses={200: UserSerializer})
     def me(self, request: Any) -> Response:
-        """Return the authenticated user's profile."""
+        """Return the authenticated user's profile.
+
+        The :class:`UserSerializer` payload includes the user's live
+        ``primary_role`` and the full ``roles`` set. The
+        ``permissions`` claim on the access JWT is baked at login
+        time and can drift after a role change — the frontend's
+        ``/dashboard`` home re-fetches ``/auth/me/`` on mount to
+        decide which role-specific branch to render, and trusts the
+        live payload rather than the (potentially stale) JWT claim.
+        """
         if not (request.user and request.user.is_authenticated):
             return Response(status=status.HTTP_401_UNAUTHORIZED)
-        return Response(UserSerializer(request.user).data, status=status.HTTP_200_OK)
+        data = UserSerializer(request.user).data
+        # Live permission list — separate from the JWT's
+        # ``permissions`` claim. The frontend uses this to refresh
+        # client-side gates after a role change.
+        data["permissions"] = sorted(
+            request.user.permissions().values_list("codename", flat=True)
+        )
+        return Response(data, status=status.HTTP_200_OK)
 
     @extend_schema(request=UserUpdateSerializer, responses={200: UserSerializer})
     def update_me(self, request: Any) -> Response:
@@ -239,11 +353,33 @@ class AuthViewSet(viewsets.ViewSet):
 class UserViewSet(viewsets.ViewSet):
     """Admin endpoints for user management.
 
-    All actions are gated by ``HasPermission('accounts.user.crud')`` —
-    see ``03-use-cases.md`` §3.
+    All actions are gated by ``HasPermission('accounts.user.create')``
+    by default. The two elevated actions — ``reset_password`` and
+    ``set_roles`` — use a stricter codename resolved per-action via
+    :meth:`get_permissions`. See ``03-use-cases.md`` §3.
     """
 
     permission_classes = [IsAuthenticated, HasPermission.with_codes("accounts.user.create")]
+
+    # ---- action-specific permission overrides --------------------------
+    # These actions require a stricter (narrower) codename than the
+    # class-level ``accounts.user.create`` — password reset needs
+    # ``accounts.user.reset_password`` (SA only), role assignment needs
+    # ``accounts.role.assign`` (SA only). The mapping is per-action so
+    # the broader CRUD actions keep working unchanged.
+    _ACTION_PERMISSION_OVERRIDES = {
+        "reset_password": ("accounts.user.reset_password",),
+        "set_roles": ("accounts.role.assign",),
+    }
+
+    def get_permissions(self):  # type: ignore[no-untyped-def]
+        codes = self._ACTION_PERMISSION_OVERRIDES.get(self.action)
+        if codes is not None:
+            # DRF expects permission *instances* from get_permissions.
+            # The class-level ``permission_classes`` is auto-instantiated
+            # by DRF; here we have to instantiate explicitly.
+            return [IsAuthenticated(), HasPermission.with_codes(*codes)()]
+        return super().get_permissions()
 
     def list(self, request: Any) -> Response:
         users = User.objects.all().order_by("email")
@@ -304,6 +440,60 @@ class UserViewSet(viewsets.ViewSet):
             return Response(status=status.HTTP_404_NOT_FOUND)
         services.users.unlock_user(user)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(request=AdminPasswordResetSerializer, responses={204: None})
+    def reset_password(self, request: Any, pk: str | None = None) -> Response:
+        """Set a new password for the given user.
+
+        The service runs the full ``validate_password`` complexity check
+        (12+ chars, 3-of-4 complexity, common-password block) on top of
+        the serializer's cheap ``min_length=12`` gate. Refresh tokens
+        are revoked so the affected user must sign in again.
+
+        Gated by ``accounts.user.reset_password`` — SYSTEM_ADMINISTRATOR
+        only. See :meth:`get_permissions`.
+        """
+        try:
+            user = User.all_objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        serializer = AdminPasswordResetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.users.admin_reset_password(
+            user, new=serializer.validated_data["new_password"]
+        )
+        from .models import RefreshToken
+
+        RefreshToken.objects.filter(user=user, revoked_at__isnull=True).update(
+            revoked_at=timezone.now()
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(request=SetRolesSerializer, responses={200: UserSerializer})
+    def set_roles(self, request: Any, pk: str | None = None) -> Response:
+        """Replace the user's full role set with the given list.
+
+        Unknown role codes raise a 422 (the serializer catches them
+        before the service is called). Empty list is allowed — the
+        caller is responsible for not stranding their own admin
+        account; the detail-page UI hides the "Save roles" button
+        when the resulting role set would lock the current admin out.
+
+        Gated by ``accounts.role.assign`` — SYSTEM_ADMINISTRATOR only.
+        See :meth:`get_permissions`.
+        """
+        try:
+            user = User.all_objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        serializer = SetRolesSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.users.set_user_roles(
+            user,
+            serializer.validated_data["roles"],
+            assigned_by=request.user if request.user.is_authenticated else None,
+        )
+        return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
 
 
 __all__ = ["AuthViewSet", "UserViewSet"]

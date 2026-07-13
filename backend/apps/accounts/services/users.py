@@ -94,6 +94,11 @@ def set_user_roles(user: User, role_codes: list[str], *, assigned_by: User | Non
     Unknown codes raise ``NotFoundError``. Existing assignments that are
     not in the new list are removed; the new ones are created with
     ``assigned_by`` recorded.
+
+    Revokes the user's unconsumed refresh tokens so any in-flight
+    access tokens (which carry a stale ``permissions`` claim) cannot
+    be silently rotated into a fresh access token. The affected user
+    must sign in again to pick up the new role's permissions.
     """
     roles = list(Role.objects.filter(code__in=role_codes, is_active=True))
     found_codes = {r.code for r in roles}
@@ -107,6 +112,19 @@ def set_user_roles(user: User, role_codes: list[str], *, assigned_by: User | Non
     UserRole.objects.filter(user=user).delete()
     for role in roles:
         UserRole.objects.create(user=user, role=role, assigned_by=assigned_by)
+
+    # Revoke any unconsumed refresh tokens. The access token's
+    # ``permissions`` claim is still valid for up to 15 minutes
+    # (ACCESS_TOKEN_LIFETIME), but the refresh rotation will fail
+    # the moment it tries to issue a new pair — so the worst-case
+    # stale window is 15 minutes, not the full refresh lifetime.
+    from django.utils import timezone
+
+    from apps.accounts.models import RefreshToken
+
+    RefreshToken.objects.filter(user=user, revoked_at__isnull=True).update(
+        revoked_at=timezone.now()
+    )
     return user
 
 

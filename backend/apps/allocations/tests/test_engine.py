@@ -17,7 +17,7 @@ from apps.academic.models import Course, Department, Faculty, Program
 from apps.allocations.models import Allocation, AllocationRun, Conflict
 from apps.allocations.services import run_engine
 from apps.exams.models import ExamPeriod, ExamSession
-from apps.invigilators.models import InvigilatorProfile
+from apps.invigilators.models import Availability, InvigilatorProfile
 from apps.rooms.models import Building, Room
 
 
@@ -118,3 +118,81 @@ def test_engine_endpoint_runs(client: APIClient, world, verified_user, grant_per
     body = response.json()
     assert body["sessions_placed"] == 3
     assert body["sessions_total"] == 6
+
+
+def test_engine_flags_oversubscribed_room(world) -> None:
+    """Sessions whose ``registered`` exceeds the assigned room's
+    capacity must be skipped by the engine and reported as a
+    ``no_room_capacity`` conflict — never silently placed in an
+    over-full room."""
+    period = world["period"]
+    # Pick the small-room session (first fixture row) and push
+    # registered past capacity.
+    oversize = world["sessions"][0]
+    oversize.registered = oversize.room.capacity + 10
+    oversize.save()
+
+    run = run_engine(period)
+
+    # The over-full session should NOT have any allocations.
+    assert Allocation.objects.filter(run=run, session=oversize).count() == 0
+    # A no_room_capacity conflict should reference it.
+    conflicts = Conflict.objects.filter(run=run, session=oversize, type="no_room_capacity")
+    assert conflicts.exists()
+    # The other two sessions still get placed.
+    assert run.sessions_placed == 2
+
+
+def test_engine_flags_session_with_no_room(world) -> None:
+    """A session with no assigned room is pre-flighted out."""
+    period = world["period"]
+    no_room = world["sessions"][1]
+    no_room.room = None
+    no_room.save()
+
+    run = run_engine(period)
+
+    assert Allocation.objects.filter(run=run, session=no_room).count() == 0
+    assert Conflict.objects.filter(
+        run=run, session=no_room, type="no_room_capacity"
+    ).exists()
+    # Other sessions still placed.
+    assert run.sessions_placed == 2
+
+
+def test_engine_skips_invigilator_marked_off_duty(world) -> None:
+    """Engine rule #4 (status filter): an invigilator with an
+    ``Availability`` row for the session's date in a non-available
+    status is excluded from the candidate pool for that session.
+
+    Locks in the behaviour the new ``/dashboard/invigilators/[id]``
+    calendar feeds. Without this test, a future regression in the
+    candidate-builder would silently let the engine place off-duty
+    staff.
+    """
+    period = world["period"]
+    # The fixture's first session is on 2026-08-01. Mark one
+    # invigilator as off_duty for that exact date.
+    first_session = world["sessions"][0]
+    off_duty = world["invigilators"][0]
+    Availability.objects.create(
+        invigilator=off_duty,
+        date=first_session.starts_at.date(),
+        status="off_duty",
+    )
+
+    run = run_engine(period)
+
+    # The off-duty invigilator should not appear on the first session.
+    assert Allocation.objects.filter(
+        run=run, session=first_session, invigilator=off_duty
+    ).count() == 0
+    # The off-duty invigilator is still eligible for other dates
+    # (fixture's sessions are 2026-08-01, 02, 03).
+    other_sessions = [s for s in world["sessions"] if s.id != first_session.id]
+    assert Allocation.objects.filter(
+        run=run, invigilator=off_duty, session__in=other_sessions
+    ).count() > 0
+    # And the first session is still placed (the other 3 invigilators
+    # cover the 2-slot requirement).
+    assert Allocation.objects.filter(run=run, session=first_session).count() == 2

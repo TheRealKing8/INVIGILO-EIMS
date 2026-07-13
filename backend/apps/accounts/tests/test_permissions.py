@@ -157,3 +157,42 @@ def test_superuser_bypasses_everything() -> None:
     assert user.has_permission("allocator.run") is True
     assert user.has_permission("settings.update") is True
     assert p.has_permission(request, _stub_view(required=("allocator.run",))) is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 11 — admin-only password reset codename
+# ---------------------------------------------------------------------------
+def test_admin_has_user_reset_password() -> None:
+    """SYSTEM_ADMINISTRATOR can reset any user's password."""
+    user = User.objects.create_user(email="admin@x.com", full_name="Admin")
+    _attach_role(user, "SYSTEM_ADMINISTRATOR", "System Administrator")
+    assert user.has_permission("accounts.user.reset_password") is True
+    # And the existing admin codenames still work.
+    assert user.has_permission("accounts.user.create") is True
+    assert user.has_permission("accounts.role.assign") is True
+
+
+def test_officer_does_not_have_user_reset_password() -> None:
+    """EXAMINATION_OFFICER cannot reset another user's password.
+
+    ``accounts.user.reset_password`` is intentionally SA-only. The
+    "broader" ``accounts.user.create`` codename (which gates the
+    list/create/update/disable surface on ``UserViewSet``) is also
+    SA-only in the current seed — this test pins both facts so a
+    future change to widen user-management to officers won't
+    accidentally also widen password-reset.
+    """
+    user = User.objects.create_user(email="eo@x.com", full_name="EO")
+    _attach_role(user, "EXAMINATION_OFFICER", "Examination Officer")
+    # The crucial assertion: the new narrower codename is denied.
+    assert user.has_permission("accounts.user.reset_password") is False
+    # And the broader one is also denied in the current seed.
+    assert user.has_permission("accounts.user.create") is False
+
+    # HoD and Dean follow the same rule.
+    hod = User.objects.create_user(email="hod@x.com", full_name="HoD")
+    _attach_role(hod, "HEAD_OF_DEPARTMENT", "Head of Department")
+    assert hod.has_permission("accounts.user.reset_password") is False
+    dean = User.objects.create_user(email="dean@x.com", full_name="Dean")
+    _attach_role(dean, "FACULTY_DEAN", "Faculty Dean")
+    assert dean.has_permission("accounts.user.reset_password") is False

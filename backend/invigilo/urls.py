@@ -48,6 +48,7 @@ api_v1_patterns = [
     path("incidents/", include(("apps.incidents.urls", "incidents"), namespace="incidents")),
     path("reports/", include(("apps.reports.urls", "reports"), namespace="reports")),
     path("audit/", include(("apps.audit.urls", "audit"), namespace="audit")),
+    path("ai/", include(("apps.ai.urls", "ai"), namespace="ai")),
 ]
 
 urlpatterns = [

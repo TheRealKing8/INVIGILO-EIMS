@@ -5,7 +5,9 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.allocations.models import Allocation
 from apps.core.permissions import HasPermission
+from apps.invigilators.models import InvigilatorProfile
 
 from .models import ExamPeriod, ExamSession
 from .serializers import ExamPeriodSerializer, ExamSessionSerializer
@@ -25,6 +27,17 @@ LIFECYCLE_TRANSITIONS: dict[str, set[str]] = {
     "cancelled": {"draft", "scheduled", "ready", "pending"},
     "pending": {"scheduled"},
 }
+
+
+# Permission sets used by the session viewset's get_permissions hook.
+# ``read`` and ``write`` are split so an invigilator can read +
+# create their own session without the ability to delete / mutate
+# somebody else's session. Lifecycle actions (cancel, publish, draft,
+# reschedule) intentionally stay on the stricter CRUD codename —
+# those are admin/officer-only operations.
+_SESSION_READ_PERMS = ("exam.session.crud", "exam.session.view")
+_SESSION_WRITE_PERMS = ("exam.session.crud", "exam.session.create")
+_SESSION_LIFECYCLE_PERMS = ("exam.session.crud",)
 
 
 @extend_schema(tags=["exams"])
@@ -62,7 +75,9 @@ class ExamSessionViewSet(viewsets.ModelViewSet):
         "room__building",
     )
     serializer_class = ExamSessionSerializer
-    permission_classes = [HasPermission.with_codes("exam.session.crud")]
+    # Default is the read set; the get_permissions() hook tightens
+    # this for write / lifecycle methods.
+    permission_classes = [HasPermission.with_codes(*_SESSION_READ_PERMS)]
     filterset_fields = ("status", "period", "room", "course", "invigilators_required", "course_unit")
     ordering_fields = ("starts_at", "registered", "capacity")
     ordering = ("starts_at",)
@@ -76,6 +91,84 @@ class ExamSessionViewSet(viewsets.ModelViewSet):
             description="Filter sessions to a single exam period.",
         ),
     ]
+
+    def get_permissions(self):  # type: ignore[no-untyped-def]
+        """Pick the right permission set per action.
+
+        The viewset is exposed to two populations: admins/officers
+        (with the broad ``exam.session.crud``) and invigilators
+        (with the narrower ``exam.session.create`` + ``view``). The
+        permission sets below list both — ``HasPermission`` matches
+        the user as long as they hold **any** of the listed
+        codenames.
+        """
+        lifecycle_actions = {
+            "cancel", "draft", "publish", "reschedule",
+            "update", "partial_update", "destroy",
+        }
+        if self.action in lifecycle_actions:
+            codes = _SESSION_LIFECYCLE_PERMS
+        elif self.action == "create":
+            codes = _SESSION_WRITE_PERMS
+        else:
+            codes = _SESSION_READ_PERMS
+        return [HasPermission.with_codes(*codes)()]
+
+    def create(self, request, *args, **kwargs):  # type: ignore[no-untyped-def]
+        """Create an exam session.
+
+        Behavioural rule: if the caller is an invigilator (i.e. they
+        hold ``exam.session.create`` but NOT ``exam.session.crud``)
+        and the user has an ``InvigilatorProfile``, a synthetic
+        :class:`AllocationRun` + :class:`Allocation` pair is created
+        so the invigilator is immediately assigned to the session
+        they just added. The synthetic run is the cleanest place to
+        put it — every Allocation needs a parent run, and we don't
+        want to make ``run`` nullable in the schema just for this
+        self-service path.
+        """
+        from apps.allocations.models import AllocationRun
+
+        response = super().create(request, *args, **kwargs)
+        if response.status_code != status.HTTP_201_CREATED:
+            return response
+        new_session = ExamSession.objects.get(pk=response.data["id"])
+        is_invigilator_path = (
+            request.user.has_permission("exam.session.create")
+            and not request.user.has_permission("exam.session.crud")
+        )
+        if is_invigilator_path:
+            try:
+                profile = InvigilatorProfile.objects.get(user=request.user)
+            except InvigilatorProfile.DoesNotExist:
+                profile = None
+            if profile is not None:
+                # Synthetic run — not produced by the engine, but
+                # the audit trail wants every allocation to have a
+                # parent run. Mark runtime_seconds=0 and finished_at
+                # = now so the run reads as a completed self-allocate.
+                from django.utils import timezone
+
+                run = AllocationRun.objects.create(
+                    period=new_session.period,
+                    triggered_by=request.user,
+                    sessions_total=1,
+                    sessions_placed=1,
+                    runtime_seconds=0,
+                    finished_at=timezone.now(),
+                )
+                # Allocation has a unique constraint on
+                # (session, invigilator) so we key the get_or_create
+                # on those two; the run gets attached on the create
+                # path. If an existing allocation row already exists
+                # (e.g. an admin pre-allocated the invigilator) we
+                # leave it alone rather than mutating it.
+                Allocation.objects.get_or_create(
+                    session=new_session,
+                    invigilator=profile,
+                    defaults={"run": run, "role": "chief", "status": "confirmed"},
+                )
+        return response
 
     # ------------------------------------------------------------------
     # Lifecycle helpers

@@ -79,6 +79,7 @@ PERMISSIONS: Final[tuple[dict, ...]] = (
     {"codename": "accounts.user.create", "name": "Create users"},
     {"codename": "accounts.user.update", "name": "Update users"},
     {"codename": "accounts.user.disable", "name": "Disable users"},
+    {"codename": "accounts.user.reset_password", "name": "Reset any user's password"},
     {"codename": "accounts.role.assign", "name": "Assign roles"},
     {"codename": "accounts.profile.update_own", "name": "Update own profile"},
     # academic
@@ -98,6 +99,13 @@ PERMISSIONS: Final[tuple[dict, ...]] = (
     # exam periods
     {"codename": "exam.period.crud", "name": "Manage exam periods"},
     {"codename": "exam.session.crud", "name": "Manage exam sessions"},
+    # Finer-grained session permissions so an invigilator can add
+    # their own session without full CRUD. ``create`` writes a new
+    # session (the create endpoint + auto-allocate hook); ``view``
+    # reads the list / detail endpoints; both are intentionally
+    # less privileged than ``crud``.
+    {"codename": "exam.session.create", "name": "Create exam session"},
+    {"codename": "exam.session.view", "name": "View exam sessions"},
     # rooms
     {"codename": "room.crud", "name": "Manage rooms"},
     {"codename": "room.allocate", "name": "Allocate rooms"},
@@ -189,6 +197,10 @@ ROLE_PERMISSIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "notification.view_own",
             "report.view",
             "analytics.view",
+            # Invigilators can add their own exam session and view
+            # the full list (the create auto-assigns them to it).
+            "exam.session.create",
+            "exam.session.view",
         ),
     ),
     (

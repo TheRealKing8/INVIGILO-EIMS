@@ -49,3 +49,10 @@ REST_FRAMEWORK = {  # noqa: F405
     "DEFAULT_THROTTLE_CLASSES": (),
     "DEFAULT_THROTTLE_RATES": {},
 }
+
+# Cookie + session tests run in-process without HTTPS, so we relax the
+# ``Secure`` flag (the production default is ``not DEBUG``). We also
+# expose the refresh token in the response body so the legacy tests
+# that read ``pair["refresh"]`` keep working.
+JWT_REFRESH_COOKIE_SECURE = False
+JWT_INCLUDE_REFRESH_IN_BODY = True
