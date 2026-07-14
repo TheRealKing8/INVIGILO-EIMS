@@ -44,3 +44,28 @@ def verified_user(invigilator_role: Role):  # type: ignore[no-untyped-def]
     )
     UserRole.objects.create(user=user, role=invigilator_role)
     return user
+
+
+@pytest.fixture
+def student_user() -> User:
+    """A verified STUDENT user — used by tests that need a user
+    that can complete a password-only login (no OTP step) and
+    then exercise the JWT / cookie / refresh mechanics.
+
+    Added when the OTP policy was widened to all staff roles — the
+    older ``verified_user`` fixture is an INVIGILATOR and now goes
+    through the OTP second step, which is the wrong shape for
+    tests that only care about the cookie set / refresh rotation
+    / logout mechanics.
+    """
+    role, _ = Role.objects.update_or_create(
+        code="STUDENT", defaults={"name": "Student", "is_active": True}
+    )
+    user = User.objects.create_user(
+        email="student@x.com",
+        full_name="Student",
+        password="S3cur3Passw0rd!",
+        is_email_verified=True,
+    )
+    UserRole.objects.create(user=user, role=role)
+    return user

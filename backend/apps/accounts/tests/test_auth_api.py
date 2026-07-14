@@ -23,59 +23,60 @@ User = get_user_model()
 # ---------------------------------------------------------------------------
 # Login
 # ---------------------------------------------------------------------------
-def test_login_returns_token_pair(client: APIClient, verified_user: User) -> None:
+def test_login_returns_token_pair(client: APIClient, student_user: User) -> None:
     response = client.post(
         reverse("auth:auth-login"),
-        {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
+        {"email": "student@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
     assert response.status_code == 200
     body = response.json()
     assert "access" in body
     assert "refresh" in body
-    assert body["user"]["email"] == "alice@x.com"
-    assert body["user"]["role"] == "INVIGILATOR"
+    assert body["user"]["email"] == "student@x.com"
+    assert body["user"]["role"] == "STUDENT"
 
 
 def test_login_response_includes_permissions_claim(
-    client: APIClient, verified_user: User
+    client: APIClient, student_user: User
 ) -> None:
     """The login response must include a ``permissions`` list on the user.
 
-    The frontend uses this to drive nav visibility and route guards.
-    The list is the union of permission codenames granted across all
-    of the user's active roles.
+    STUDENT skips the OTP step so we get the JWT pair in one
+    round-trip. The list is the union of permission codenames granted
+    across all of the user's active roles.
     """
     response = client.post(
         reverse("auth:auth-login"),
-        {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
+        {"email": "student@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
     assert response.status_code == 200
     body = response.json()
     assert isinstance(body["user"]["permissions"], list)
-    # Invigilator's seeded grants (see apps/accounts/seed.py).
-    assert "attendance.checkin_own" in body["user"]["permissions"]
-    assert "incident.create" in body["user"]["permissions"]
-    # An admin-only permission should NOT be on this invigilator's list.
+    # Student's seeded grants (see apps/accounts/seed.py).
+    assert "accounts.profile.update_own" in body["user"]["permissions"]
+    assert "exam.session.view_own" in body["user"]["permissions"]
+    # An admin-only permission should NOT be on this student's list.
     assert "settings.update" not in body["user"]["permissions"]
 
 
 def test_login_access_token_carries_permissions_claim(
-    client: APIClient, verified_user: User
+    client: APIClient, student_user: User
 ) -> None:
     """The encoded JWT must carry the same ``permissions`` claim.
 
     The frontend reads it from ``localStorage`` (saved at login) and
     uses it across page navigations. The claim must match the response
-    payload so client and server are always in agreement.
+    payload so client and server are always in agreement. STUDENT
+    skips OTP so the access token is in the login response body.
     """
     import jwt
     from django.conf import settings
 
     response = client.post(
         reverse("auth:auth-login"),
-        {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
+        {"email": "student@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
     access = response.json()["access"]
@@ -86,9 +87,9 @@ def test_login_access_token_carries_permissions_claim(
         audience=settings.SIMPLE_JWT["AUDIENCE"],
         issuer=settings.SIMPLE_JWT["ISSUER"],
     )
-    assert payload["role"] == "INVIGILATOR"
+    assert payload["role"] == "STUDENT"
     assert "permissions" in payload
-    assert "attendance.checkin_own" in payload["permissions"]
+    assert "accounts.profile.update_own" in payload["permissions"]
     assert "settings.update" not in payload["permissions"]
 
 

@@ -81,7 +81,13 @@ def test_admin_login_returns_requires_otp(client: APIClient, admin_user: User) -
     assert re.search(r"\b\d{6}\b", sent.body) is not None
 
 
-def test_invigilator_login_skips_otp(client: APIClient, verified_user: User) -> None:
+def test_invigilator_login_requires_otp(client: APIClient, verified_user: User) -> None:
+    """INVIGILATOR is a staff role — they must complete the OTP step.
+
+    STUDENT and GUEST skip OTP (separate tests below).
+    """
+    from django.core import mail
+
     response = client.post(
         reverse("auth:auth-login"),
         {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
@@ -89,10 +95,15 @@ def test_invigilator_login_skips_otp(client: APIClient, verified_user: User) -> 
     )
     assert response.status_code == 200
     body = response.json()
-    assert "access" in body
-    assert "requires_otp" not in body
-    # No OTP row was created for the invigilator.
-    assert not LoginOTP.objects.filter(user=verified_user).exists()
+    assert body["requires_otp"] is True
+    assert isinstance(body["otp_token"], str) and len(body["otp_token"]) > 16
+    assert "access" not in body
+    # Exactly one active OTP row for this user.
+    assert LoginOTP.objects.filter(user=verified_user, consumed_at__isnull=True).count() == 1
+    # The OTP email was queued by the Celery task and the locmem
+    # backend captured it.
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == [verified_user.email]
 
 
 # ---------------------------------------------------------------------------
@@ -168,3 +179,144 @@ def test_otp_reissue_revokes_prior_otp(client: APIClient, admin_user: User) -> N
     assert (
         LoginOTP.objects.filter(user=admin_user, consumed_at__isnull=True).count() == 1
     )
+
+
+# ---------------------------------------------------------------------------
+# Role-based OTP gating
+# ---------------------------------------------------------------------------
+# All 6 internal staff roles must complete the OTP second step on
+# login; STUDENT and GUEST skip. A user with multiple roles resolves
+# to the highest-precedence primary (see User.primary_role_code).
+# ---------------------------------------------------------------------------
+def _attach_role(user: User, code: str, name: str) -> Role:
+    role, _ = Role.objects.update_or_create(
+        code=code, defaults={"name": name, "is_active": True}
+    )
+    UserRole.objects.get_or_create(user=user, role=role)
+    return role
+
+
+def _user_with_role(email: str, code: str, name: str) -> User:
+    user = User.objects.create_user(
+        email=email,
+        full_name=name,
+        password="S3cur3Passw0rd!",
+        is_email_verified=True,
+    )
+    _attach_role(user, code, name)
+    return user
+
+
+def test_examination_officer_requires_otp(client: APIClient) -> None:
+    from django.core import mail
+
+    user = _user_with_role("eo@x.com", "EXAMINATION_OFFICER", "Examination Officer")
+    response = client.post(
+        reverse("auth:auth-login"),
+        {"email": "eo@x.com", "password": "S3cur3Passw0rd!"},
+        format="json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requires_otp"] is True
+    assert "access" not in body
+    assert LoginOTP.objects.filter(user=user, consumed_at__isnull=True).count() == 1
+    assert len(mail.outbox) == 1
+
+
+def test_head_of_department_requires_otp(client: APIClient) -> None:
+    user = _user_with_role("hod@x.com", "HEAD_OF_DEPARTMENT", "Head of Department")
+    response = client.post(
+        reverse("auth:auth-login"),
+        {"email": "hod@x.com", "password": "S3cur3Passw0rd!"},
+        format="json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requires_otp"] is True
+    assert "access" not in body
+    assert LoginOTP.objects.filter(user=user, consumed_at__isnull=True).count() == 1
+
+
+def test_faculty_dean_requires_otp(client: APIClient) -> None:
+    user = _user_with_role("dean@x.com", "FACULTY_DEAN", "Faculty Dean")
+    response = client.post(
+        reverse("auth:auth-login"),
+        {"email": "dean@x.com", "password": "S3cur3Passw0rd!"},
+        format="json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requires_otp"] is True
+    assert "access" not in body
+    assert LoginOTP.objects.filter(user=user, consumed_at__isnull=True).count() == 1
+
+
+def test_security_officer_requires_otp(client: APIClient) -> None:
+    user = _user_with_role("sec@x.com", "SECURITY_OFFICER", "Security Officer")
+    response = client.post(
+        reverse("auth:auth-login"),
+        {"email": "sec@x.com", "password": "S3cur3Passw0rd!"},
+        format="json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requires_otp"] is True
+    assert "access" not in body
+    assert LoginOTP.objects.filter(user=user, consumed_at__isnull=True).count() == 1
+
+
+def test_student_skips_otp(client: APIClient) -> None:
+    """STUDENT is a read-only role — no OTP step."""
+    user = _user_with_role("stu@x.com", "STUDENT", "Student")
+    response = client.post(
+        reverse("auth:auth-login"),
+        {"email": "stu@x.com", "password": "S3cur3Passw0rd!"},
+        format="json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "access" in body
+    assert "requires_otp" not in body
+    assert body["user"]["role"] == "STUDENT"
+    assert not LoginOTP.objects.filter(user=user).exists()
+
+
+def test_guest_skips_otp(client: APIClient) -> None:
+    """GUEST is a public read-only role — no OTP step."""
+    user = _user_with_role("guest@x.com", "GUEST", "Guest")
+    response = client.post(
+        reverse("auth:auth-login"),
+        {"email": "guest@x.com", "password": "S3cur3Passw0rd!"},
+        format="json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "access" in body
+    assert "requires_otp" not in body
+    assert body["user"]["role"] == "GUEST"
+    assert not LoginOTP.objects.filter(user=user).exists()
+
+
+def test_mixed_invigilator_student_roles_requires_otp(client: APIClient) -> None:
+    """A user holding both INVIGILATOR and STUDENT resolves to the
+    higher-precedence primary (INVIGILATOR) and must complete OTP.
+
+    Pinpoints the policy decision in :func:`requires_login_otp` to
+    use ``primary_role_code`` rather than ``has_role`` — a user with
+    both staff and non-staff roles is always treated as the staff
+    role for OTP purposes.
+    """
+    user = _user_with_role("mix@x.com", "STUDENT", "Student")
+    _attach_role(user, "INVIGILATOR", "Invigilator")
+    assert user.primary_role_code == "INVIGILATOR"
+    response = client.post(
+        reverse("auth:auth-login"),
+        {"email": "mix@x.com", "password": "S3cur3Passw0rd!"},
+        format="json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requires_otp"] is True
+    assert "access" not in body
+    assert LoginOTP.objects.filter(user=user, consumed_at__isnull=True).count() == 1

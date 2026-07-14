@@ -31,10 +31,12 @@ def client() -> APIClient:
 # ---------------------------------------------------------------------------
 # Login
 # ---------------------------------------------------------------------------
-def test_login_sets_httponly_refresh_cookie(client: APIClient, verified_user) -> None:  # type: ignore[no-untyped-def]
+def test_login_sets_httponly_refresh_cookie(client: APIClient, student_user) -> None:  # type: ignore[no-untyped-def]
+    # STUDENT skips the OTP step so the login response carries the
+    # full JWT pair + the httpOnly refresh cookie in one round-trip.
     response = client.post(
         reverse("auth:auth-login"),
-        {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
+        {"email": "student@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
     assert response.status_code == 200
@@ -49,10 +51,10 @@ def test_login_sets_httponly_refresh_cookie(client: APIClient, verified_user) ->
     assert morsel.value  # the raw refresh is in the cookie
 
 
-def test_login_cookie_value_matches_persisted_refresh(client: APIClient, verified_user) -> None:  # type: ignore[no-untyped-def]
+def test_login_cookie_value_matches_persisted_refresh(client: APIClient, student_user) -> None:  # type: ignore[no-untyped-def]
     response = client.post(
         reverse("auth:auth-login"),
-        {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
+        {"email": "student@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
     raw = response.cookies[settings.JWT_REFRESH_COOKIE_NAME].value
@@ -74,11 +76,11 @@ def test_register_sets_httponly_refresh_cookie(client: APIClient) -> None:
 # Refresh — cookie-driven
 # ---------------------------------------------------------------------------
 def test_refresh_via_cookie_rotates_and_resets_cookie(
-    client: APIClient, verified_user
+    client: APIClient, student_user
 ) -> None:  # type: ignore[no-untyped-def]
     login = client.post(
         reverse("auth:auth-login"),
-        {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
+        {"email": "student@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
     old_raw = login.cookies[settings.JWT_REFRESH_COOKIE_NAME].value
@@ -129,11 +131,11 @@ def test_refresh_with_body_fallback_still_works(
 # Logout
 # ---------------------------------------------------------------------------
 def test_logout_with_cookie_clears_cookie_and_revokes(
-    client: APIClient, verified_user
+    client: APIClient, student_user
 ) -> None:  # type: ignore[no-untyped-def]
     login = client.post(
         reverse("auth:auth-login"),
-        {"email": "alice@x.com", "password": "S3cur3Passw0rd!"},
+        {"email": "student@x.com", "password": "S3cur3Passw0rd!"},
         format="json",
     )
     raw = login.cookies[settings.JWT_REFRESH_COOKIE_NAME].value

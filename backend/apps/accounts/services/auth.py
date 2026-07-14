@@ -446,16 +446,46 @@ def consume_login_otp(otp_token: str, code: str) -> Optional[User]:
     return row.user
 
 
+# Roles whose primary holder must complete the OTP second step on
+# login. STUDENT and GUEST are deliberately absent — they are
+# read-only / public-access roles; the extra step is friction with
+# no security gain. Kept as a module-level frozenset so the test
+# suite can import and assert against the exact same set.
+_OTP_REQUIRED_ROLES = frozenset({
+    "SYSTEM_ADMINISTRATOR",
+    "EXAMINATION_OFFICER",
+    "FACULTY_DEAN",
+    "HEAD_OF_DEPARTMENT",
+    "INVIGILATOR",
+    "SECURITY_OFFICER",
+})
+
+
 def requires_login_otp(user: User) -> bool:
     """Return True if ``user`` must complete the OTP second step.
 
-    Currently this is any user that holds the SYSTEM_ADMINISTRATOR
-    role. Kept as a single function so the policy can be widened
-    later (e.g. EXAMINATION_OFFICER) without touching the view.
+    OTP is required for any user whose ``primary_role_code`` is one
+    of the internal staff roles (SA, EO, HoD, Dean, Invigilator,
+    Security Officer). STUDENT and GUEST skip — they're read-only /
+    public-access roles and the extra step would be friction with
+    no security gain (their token is already constrained by the
+    permission set their role grants).
+
+    Superusers always get OTP regardless of the role they happen to
+    hold, so the function never weakens the admin's protection just
+    because someone removed their SYSTEM_ADMINISTRATOR row.
+
+    A user with multiple roles resolves to the highest-precedence
+    primary (see :py:attr:`User.primary_role_code`). A user with
+    INVIGILATOR + GUEST gets the OTP step because their primary is
+    INVIGILATOR, not because they also hold GUEST. This matches the
+    dashboard's role-branched home, which also branches on
+    ``primary_role_code``.
     """
     if user.is_superuser:
         return True
-    return user.has_role("SYSTEM_ADMINISTRATOR")
+    primary = user.primary_role_code
+    return primary is not None and primary in _OTP_REQUIRED_ROLES
 
 
 __all__ = [

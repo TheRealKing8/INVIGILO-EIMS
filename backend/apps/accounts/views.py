@@ -10,6 +10,7 @@ Two viewsets live here:
 """
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from django.contrib.auth import get_user_model
@@ -72,10 +73,12 @@ class AuthViewSet(viewsets.ViewSet):
         """Exchange email + password for an access + refresh pair.
 
         For users that must complete the OTP second step (currently
-        any SYSTEM_ADMINISTRATOR), this returns
-        ``{requires_otp: true, otp_token: '...'}`` with no JWT pair.
-        The client posts ``{otp_token, code}`` to ``/auth/verify-otp/``
-        to complete the login.
+        any user whose ``primary_role_code`` is one of the 6 internal
+        staff roles — SA, EO, HoD, Dean, Invigilator, Security
+        Officer), this returns ``{requires_otp: true, otp_token: '...'}``
+        with no JWT pair. The client posts ``{otp_token, code}`` to
+        ``/auth/verify-otp/`` to complete the login. STUDENT and
+        GUEST skip the OTP step.
 
         The refresh token is delivered as an ``invigilo_rt`` httpOnly
         cookie on the response. The access token is in the JSON body
@@ -105,6 +108,15 @@ class AuthViewSet(viewsets.ViewSet):
             from django.conf import settings
 
             if settings.DEBUG:
+                # Windows consoles default to cp1252 and crash on
+                # the box-drawing characters. Reconfigure stdout to
+                # UTF-8 so the banner prints cleanly on every
+                # platform (a no-op on macOS/Linux where stdout is
+                # already UTF-8).
+                try:
+                    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+                except (AttributeError, ValueError):
+                    pass  # non-reconfigurable stdout (e.g. captured)
                 print(
                     "\n"
                     "  ┌──────────────────────────────────────────────────────────┐\n"

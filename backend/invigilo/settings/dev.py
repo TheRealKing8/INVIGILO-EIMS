@@ -6,8 +6,10 @@ from .base import *  # noqa: F401,F403
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
-# Console email is fine for development.
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# Email backend is read from the project-root .env (Gmail SMTP for
+# the real-OTP flow). The base settings default to the console
+# backend when EMAIL_BACKEND is not set, so a fresh checkout with no
+# .env still prints OTP codes to the runserver stdout.
 
 # CORS is wide open locally.
 CORS_ALLOW_ALL_ORIGINS = True
