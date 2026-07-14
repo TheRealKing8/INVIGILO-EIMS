@@ -731,6 +731,96 @@ export async function updateIncidentStatus(
 export const getIncident = (id: string) =>
   requestWithAuth<Incident>(`/api/v1/incidents/${id}/`);
 
+// ---------------------------------------------------------------------------
+// Attendance
+// ---------------------------------------------------------------------------
+export type CheckIn = {
+  id: string;
+  session: string;
+  session_code?: string | null;
+  session_starts_at?: string | null;
+  user: string;
+  user_email?: string;
+  user_name?: string;
+  kind: "invigilator" | "student";
+  method: "self" | "bulk";
+  at: string;
+  late: boolean;
+  location: string;
+  recorded_by: string;
+  recorded_by_email?: string | null;
+  created_at?: string;
+};
+
+export type RosterEntry = {
+  user_id: string;
+  email: string;
+  full_name: string;
+  kind: "invigilator" | "student";
+  present: boolean;
+  late: boolean;
+  at: string | null;
+  method: "self" | "bulk" | null;
+  location: string;
+  recorded_by_email: string | null;
+};
+
+export type RosterTotals = {
+  present: number;
+  expected: number;
+  late: number;
+};
+
+export type Roster = {
+  session: {
+    id: string;
+    course_code: string;
+    course_title: string;
+    room_code: string | null;
+    starts_at: string;
+    ends_at: string;
+    status: ExamSession["status"];
+  };
+  invigilators: RosterEntry[];
+  students: RosterEntry[];
+  totals: {
+    invigilator: RosterTotals;
+    student: RosterTotals;
+  };
+};
+
+export const getAttendanceRoster = (sessionId: string) =>
+  requestWithAuth<Roster>(`/api/v1/attendance/sessions/${sessionId}/roster/`);
+
+export async function selfCheckIn(
+  sessionId: string,
+  kind: CheckIn["kind"],
+  location?: string,
+): Promise<CheckIn> {
+  return requestWithAuth<CheckIn>("/api/v1/attendance/", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: sessionId,
+      kind,
+      location: location ?? "",
+    }),
+  });
+}
+
+export async function bulkCheckIn(
+  sessionId: string,
+  entries: Array<{ user_id: string; kind: CheckIn["kind"]; late?: boolean; location?: string }>,
+): Promise<{ created: number; already: number }> {
+  return requestWithAuth<{ created: number; already: number }>(
+    `/api/v1/attendance/sessions/${sessionId}/bulk-checkin/`,
+    { method: "POST", body: JSON.stringify({ entries }) },
+  );
+}
+
+export function exportAttendanceCsvUrl(sessionId: string): string {
+  return `${API_BASE_URL}/api/v1/attendance/sessions/${sessionId}/export.csv`;
+}
+
 // Rooms
 export const getRooms = (params?: Record<string, string | number | undefined>) =>
   requestWithAuth<Paginated<Room>>(`/api/v1/rooms/rooms/${qs(params)}`);

@@ -46,6 +46,10 @@ api_v1_patterns = [
         include(("apps.allocations.urls", "allocations"), namespace="allocations"),
     ),
     path("incidents/", include(("apps.incidents.urls", "incidents"), namespace="incidents")),
+    path(
+        "attendance/",
+        include(("apps.attendance.urls", "attendance"), namespace="attendance"),
+    ),
     path("reports/", include(("apps.reports.urls", "reports"), namespace="reports")),
     path("audit/", include(("apps.audit.urls", "audit"), namespace="audit")),
     path("ai/", include(("apps.ai.urls", "ai"), namespace="ai")),

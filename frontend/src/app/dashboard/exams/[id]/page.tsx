@@ -27,16 +27,20 @@ import {
   cancelExamSession,
   draftExamSession,
   getAllocationForSession,
+  getAttendanceRoster,
   getExamSession,
   getIncidentsForSession,
   publishExamSession,
   rescheduleExamSession,
+  selfCheckIn,
   type Allocation,
   type ExamSession,
   type Incident,
   type Paginated,
+  type Roster,
 } from "@/lib/api";
 import { useFetch } from "@/lib/use-fetch";
+import { useAuth } from "@/lib/auth";
 
 const statusTone: Record<
   ExamSession["status"],
@@ -146,9 +150,12 @@ export default function ExamSessionDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const id = params?.id;
+  const { user } = useAuth();
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [checkinError, setCheckinError] = useState<string | null>(null);
+  const [checkinPending, setCheckinPending] = useState(false);
 
   const { data, isLoading, error, refresh } = useFetch<{
     session: ExamSession | null;
@@ -169,9 +176,47 @@ export default function ExamSessionDetailPage() {
     [id],
   );
 
+  // Roster: only fetched if the user has ``attendance.view`` (so
+  // we don't 403 students who land on this page). The list of
+  // accepted allocations above already shows the user the
+  // expected vs. present count for invigilators.
+  const canViewRoster = Boolean(
+    user?.permissions?.includes("attendance.view"),
+  );
+  const { data: roster, refresh: refreshRoster } = useFetch<Roster | null>(
+    async () => (id && canViewRoster ? getAttendanceRoster(id) : null),
+    [id, canViewRoster],
+  );
+
   const session = data?.session ?? null;
   const allocations = data?.allocations?.results ?? [];
   const incidents = data?.incidents?.results ?? [];
+
+  // The "I'm here" button is for the user themselves; the roster
+  // tells us if they're already checked in.
+  const myCheckin = roster?.invigilators.find(
+    (r) => user && r.email === user.email,
+  );
+  const canSelfCheckin = Boolean(
+    user?.permissions?.includes("attendance.checkin_own"),
+  );
+  const canCheckinAny = Boolean(
+    user?.permissions?.includes("attendance.checkin_any"),
+  );
+
+  async function doSelfCheckin() {
+    if (!id) return;
+    setCheckinError(null);
+    setCheckinPending(true);
+    try {
+      await selfCheckIn(id, "invigilator");
+      await refreshRoster();
+    } catch (err) {
+      setCheckinError(err instanceof Error ? err.message : "Check-in failed");
+    } finally {
+      setCheckinPending(false);
+    }
+  }
 
   const fillPct =
     session && session.capacity > 0
@@ -437,6 +482,63 @@ export default function ExamSessionDetailPage() {
                 ))}
               </ul>
             )}
+          </Card>
+
+          {/* Check-ins ------------------------------------------------ */}
+          <Card>
+            <CardHeader
+              eyebrow="Field"
+              title="Check-ins"
+              subtitle={
+                roster
+                  ? `${roster.totals.invigilator.present}/${roster.totals.invigilator.expected} invigilators · ${roster.totals.student.present}/${roster.totals.student.expected} students`
+                  : "Loading…"
+              }
+            />
+            <div className="mt-5 space-y-3">
+              {checkinError ? (
+                <StatusBanner tone="danger" title="Check-in failed">
+                  {checkinError}
+                </StatusBanner>
+              ) : null}
+              {canSelfCheckin && user?.primary_role === "INVIGILATOR" ? (
+                myCheckin && myCheckin.present ? (
+                  <div className="flex items-center gap-2 text-sm">
+                    <Badge tone={myCheckin.late ? "warning" : "success"} withDot>
+                      {myCheckin.late ? "Late" : "Checked in"}
+                    </Badge>
+                    <span className="text-ink-500">
+                      {myCheckin.at ? fmtDateTime(myCheckin.at) : "—"}
+                    </span>
+                  </div>
+                ) : (
+                  <Button
+                    variant="primary"
+                    size="md"
+                    iconLeft="check"
+                    onClick={() => void doSelfCheckin()}
+                    disabled={checkinPending}
+                  >
+                    {checkinPending ? "Checking in…" : "I'm here"}
+                  </Button>
+                )
+              ) : null}
+              {canCheckinAny ? (
+                <Button
+                  variant="ghost"
+                  size="md"
+                  iconLeft="users"
+                  onClick={() => router.push(`/dashboard/attendance/${id}`)}
+                >
+                  Open door roster
+                </Button>
+              ) : null}
+              {!canSelfCheckin && !canCheckinAny ? (
+                <p className="text-xs text-ink-500">
+                  Your role doesn't have check-in access for this session.
+                </p>
+              ) : null}
+            </div>
           </Card>
         </div>
       </div>

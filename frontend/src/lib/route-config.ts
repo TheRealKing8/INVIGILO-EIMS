@@ -151,6 +151,23 @@ export const ROUTE_ACCESS: ReadonlyArray<RouteAccess> = [
     ]),
   },
   {
+    href: "/dashboard/attendance",
+    label: "Attendance",
+    description: "Check-ins, door roster, exports",
+    icon: "check",
+    // Secops runs the door roster, INVIGILATOR uses the self
+    // check-in shortcut, the operations roles audit + export.
+    // The backend re-checks ``attendance.view`` per action.
+    roles: new Set<RoleCode>([
+      "SYSTEM_ADMINISTRATOR",
+      "EXAMINATION_OFFICER",
+      "HEAD_OF_DEPARTMENT",
+      "FACULTY_DEAN",
+      "SECURITY_OFFICER",
+      "INVIGILATOR",
+    ]),
+  },
+  {
     href: "/dashboard/users",
     label: "Users",
     description: "All accounts, roles, password resets",

@@ -19,7 +19,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,7 @@ import { ProgressBar, Sparkline } from "@/components/ui/viz";
 import { StatusBanner } from "@/components/ui/status-banner";
 import {
   clearAuthTokens,
+  getAttendanceRoster,
   getDashboardSummary,
   getExamSessions,
   getIncidents,
@@ -622,6 +623,59 @@ function SecurityOfficerOverview({ greeting, firstName }: { greeting: string; fi
     [],
   );
 
+  // Live check-in tile: count of invigilators present across the
+  // sessions starting in the next 2 hours. We pull a small set of
+  // session ids and sum the roster totals client-side. The
+  // ``useFetch`` already returns a loading + error state, so the
+  // tile degrades to ``—`` on any failure (same behaviour as the
+  // hardcoded placeholder it replaced).
+  const { data: upcomingForCheckins } = useFetch(
+    async () => {
+      const list = await getExamSessions({
+        page_size: 20,
+        ordering: "starts_at",
+      }).catch(() => null);
+      return list?.results ?? [];
+    },
+    [],
+  );
+  const [checkinTotals, setCheckinTotals] = useState<{
+    present: number;
+    expected: number;
+  } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const sessions = (upcomingForCheckins ?? []) as ExamSession[];
+    const now = Date.now();
+    const twoHours = now + 2 * 60 * 60 * 1000;
+    const soon = sessions.filter((s) => {
+      const t = new Date(s.starts_at).getTime();
+      return t >= now && t <= twoHours;
+    });
+    if (soon.length === 0) {
+      setCheckinTotals({ present: 0, expected: 0 });
+      return () => {
+        cancelled = true;
+      };
+    }
+    Promise.all(
+      soon.map((s) => getAttendanceRoster(s.id).catch(() => null)),
+    ).then((rosters) => {
+      if (cancelled) return;
+      let present = 0;
+      let expected = 0;
+      for (const r of rosters) {
+        if (!r) continue;
+        present += r.totals.invigilator.present;
+        expected += r.totals.invigilator.expected;
+      }
+      setCheckinTotals({ present, expected });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [upcomingForCheckins]);
+
   const sessions: ExamSession[] = sessionsData?.results ?? [];
   const incidents: Incident[] = incidentsData?.results ?? [];
   const todayStr = new Date().toDateString();
@@ -648,9 +702,23 @@ function SecurityOfficerOverview({ greeting, firstName }: { greeting: string; fi
         <Stat
           icon="check"
           label="Check-ins"
-          value="—"
-          hint="Open a session to record check-ins"
-          href="/dashboard/timetable"
+          value={
+            checkinTotals && checkinTotals.expected > 0
+              ? `${checkinTotals.present} / ${checkinTotals.expected}`
+              : "—"
+          }
+          hint={
+            checkinTotals === null
+              ? "Loading…"
+              : checkinTotals.expected === 0
+                ? "No sessions in the next 2 hours"
+                : `${checkinTotals.expected - checkinTotals.present} invigilator${
+                    checkinTotals.expected - checkinTotals.present === 1
+                      ? ""
+                      : "s"
+                  } still expected`
+          }
+          href="/dashboard/attendance"
         />
         <Stat
           icon="alert"
