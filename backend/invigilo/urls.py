@@ -53,6 +53,17 @@ api_v1_patterns = [
     path("reports/", include(("apps.reports.urls", "reports"), namespace="reports")),
     path("audit/", include(("apps.audit.urls", "audit"), namespace="audit")),
     path("ai/", include(("apps.ai.urls", "ai"), namespace="ai")),
+    # The calendar feed URL is at ``/api/v1/calendar/feed.ics`` — mounted
+    # directly (not via the notifications include) so the path lives at
+    # ``/calendar/``, not ``/notifications/calendar/``.
+    path(
+        "calendar/",
+        include(("apps.notifications.urls_calendar", "notifications_calendar"), namespace="calendar"),
+    ),
+    path(
+        "notifications/",
+        include(("apps.notifications.urls", "notifications"), namespace="notifications"),
+    ),
 ]
 
 urlpatterns = [

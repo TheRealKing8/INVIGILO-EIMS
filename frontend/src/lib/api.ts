@@ -821,6 +821,52 @@ export function exportAttendanceCsvUrl(sessionId: string): string {
   return `${API_BASE_URL}/api/v1/attendance/sessions/${sessionId}/export.csv`;
 }
 
+// ---------------------------------------------------------------------------
+// Notifications (Phase 14 — the in-app event feed + topbar bell)
+// ---------------------------------------------------------------------------
+export type Notification = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  target_type: string;
+  target_id: string;
+  target_url: string;
+  is_read: boolean;
+  read_at: string | null;
+  email_sent_at: string | null;
+  email_failed: boolean;
+  recipient_email: string;
+  created_at: string;
+};
+
+export const getNotifications = (
+  params?: Record<string, string | number | undefined>,
+) =>
+  requestWithAuth<Paginated<Notification>>(
+    `/api/v1/notifications/${qs(params)}`,
+  );
+
+export async function markAllRead(): Promise<{ updated: number }> {
+  return requestWithAuth<{ updated: number }>("/api/v1/notifications/mark-all-read/", {
+    method: "POST",
+  });
+}
+
+export async function markRead(id: string): Promise<Notification> {
+  return requestWithAuth<Notification>(`/api/v1/notifications/${id}/read/`, {
+    method: "POST",
+  });
+}
+
+export async function getUnreadCount(): Promise<{ count: number }> {
+  return requestWithAuth<{ count: number }>("/api/v1/notifications/unread-count/");
+}
+
+export function calendarFeedUrl(): string {
+  return `${API_BASE_URL}/api/v1/calendar/feed.ics`;
+}
+
 // Rooms
 export const getRooms = (params?: Record<string, string | number | undefined>) =>
   requestWithAuth<Paginated<Room>>(`/api/v1/rooms/rooms/${qs(params)}`);

@@ -179,6 +179,24 @@ export const ROUTE_ACCESS: ReadonlyArray<RouteAccess> = [
     // the entry for everyone except the SA.
     roles: new Set<RoleCode>(["SYSTEM_ADMINISTRATOR"]),
   },
+  {
+    href: "/dashboard/notifications",
+    label: "Notifications",
+    description: "Your in-app event feed",
+    icon: "bell",
+    // Every role except GUEST — backend re-checks
+    // ``notification.view_own``. SA + EO aren't seeded with that
+    // codename (they're the *originators* of most notifications), so
+    // showing them the entry would be a 403 bait-and-switch.
+    roles: new Set<RoleCode>([
+      "EXAMINATION_OFFICER",
+      "FACULTY_DEAN",
+      "HEAD_OF_DEPARTMENT",
+      "INVIGILATOR",
+      "SECURITY_OFFICER",
+      "STUDENT",
+    ]),
+  },
 ];
 
 /**

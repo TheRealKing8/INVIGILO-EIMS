@@ -67,6 +67,7 @@ LOCAL_APPS = [
     "apps.reports",
     "apps.audit",
     "apps.ai",
+    "apps.notifications",
 ]
 
 THIRD_PARTY_APPS = [

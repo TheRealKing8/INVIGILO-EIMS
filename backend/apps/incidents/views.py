@@ -60,4 +60,41 @@ class IncidentViewSet(viewsets.ModelViewSet):
             incident.resolved_at = timezone.now()
             incident.resolved_by = request.user
         incident.save(update_fields=("status", "resolved_at", "resolved_by", "updated_at"))
+
+        # Fire in-app notifications on escalations and resolutions. We
+        # do the lookup inside the view (not a signal) because the
+        # target user is "the chief for this incident" — derived from
+        # roles, not a FK on the row.
+        if new_status in {"escalated", "resolved"}:
+            from apps.accounts.models import Role
+            from apps.notifications.services import notify
+
+            targets: list = []
+            if new_status == "escalated":
+                # Notify every active EXAMINATION_OFFICER — they're
+                # the ones who'll pick it up.
+                eo_role = Role.objects.filter(code="EXAMINATION_OFFICER", is_active=True).first()
+                if eo_role is not None:
+                    targets = list(
+                        eo_role.role_users.select_related("user").all()
+                    )
+                    targets = [ru.user for ru in targets]
+            elif new_status == "resolved":
+                # Notify the reporter (so they know it's closed).
+                if incident.reporter_id:
+                    targets = [incident.reporter]
+
+            for user in targets:
+                notify(
+                    recipient=user,
+                    kind=f"incident.{new_status}",
+                    title=f"Incident {new_status}: {incident.title}",
+                    body=(
+                        f"Incident {incident.id} on {incident.session.course.code if incident.session else 'no session'} "
+                        f"moved to {new_status}."
+                    ),
+                    target_type="Incident",
+                    target_id=str(incident.id),
+                )
+
         return Response(self.get_serializer(incident).data)

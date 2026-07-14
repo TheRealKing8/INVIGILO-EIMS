@@ -67,8 +67,31 @@ class AllocationViewSet(viewsets.ModelViewSet):
             new_profile = InvigilatorProfile.objects.get(pk=new_inv_id)
         except InvigilatorProfile.DoesNotExist as exc:
             raise ValidationError({"invigilator_id": "Unknown invigilator."}) from exc
+
+        # Capture the previous invigilator so we can notify them
+        # they're being moved off. The post_save signal handles the
+        # *new* invigilator (allocation_created_or_changed in
+        # ``apps.notifications.signals``); we handle the old one here
+        # because post_save doesn't expose the pre-image FK.
+        old_invigilator = allocation.invigilator
         allocation.invigilator = new_profile
         allocation.save(update_fields=("invigilator", "updated_at"))
+
+        if old_invigilator.pk != new_profile.pk:
+            from apps.notifications.services import notify
+
+            notify(
+                recipient=old_invigilator.user,
+                kind="allocation.reassigned",
+                title=f"Reassigned from {allocation.session.course.code}",
+                body=(
+                    f"You've been moved off {allocation.session.course.code} on "
+                    f"{allocation.session.starts_at:%Y-%m-%d %H:%M}."
+                ),
+                target_type="Allocation",
+                target_id=str(allocation.id),
+            )
+
         return Response(self.get_serializer(allocation).data)
 
 

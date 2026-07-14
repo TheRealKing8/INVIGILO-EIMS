@@ -24,6 +24,7 @@ import { Icon } from "@/components/ui/icon";
 import { ProgressBar } from "@/components/ui/viz";
 import { StatusBanner } from "@/components/ui/status-banner";
 import {
+  calendarFeedUrl,
   cancelExamSession,
   draftExamSession,
   getAllocationForSession,
@@ -260,14 +261,24 @@ export default function ExamSessionDetailPage() {
       title={session ? session.course_code ?? session.course_title ?? "Session" : "Session"}
       subtitle={session ? (session.course_title ?? "Examination session") : "Loading…"}
       actions={
-        <Button
-          variant="ghost"
-          size="md"
-          iconLeft="arrow-right"
-          onClick={() => router.push("/dashboard/exams")}
-        >
-          <span className="-mt-px inline-block rotate-180">Back to examinations</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          <a
+            href={calendarFeedUrl()}
+            download
+            className="inline-flex h-10 items-center gap-2 rounded-full bg-ink-100/60 px-4 text-sm font-medium text-ink-700 ring-1 ring-inset ring-ink-200 transition hover:bg-surface"
+          >
+            <Icon name="download" className="h-4 w-4" />
+            Add to calendar
+          </a>
+          <Button
+            variant="ghost"
+            size="md"
+            iconLeft="arrow-right"
+            onClick={() => router.push("/dashboard/exams")}
+          >
+            <span className="-mt-px inline-block rotate-180">Back to examinations</span>
+          </Button>
+        </div>
       }
     >
       {error ? (

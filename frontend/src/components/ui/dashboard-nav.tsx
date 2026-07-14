@@ -22,6 +22,7 @@ import { BrandMark } from "@/components/ui/brand";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { SearchPopover } from "@/components/search-popover";
 import type { AuthUser } from "@/lib/api";
+import { getUnreadCount } from "@/lib/api";
 import { visibleNavItems, type RouteAccess } from "@/lib/route-config";
 
 type NavItem = RouteAccess; // alias to keep the rest of this file unchanged
@@ -239,9 +240,36 @@ export function Topbar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [unread, setUnread] = useState<number | null>(null);
   const router = useRouter();
   const menuRef = useRef<HTMLDivElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Poll the unread-count endpoint every 60s. SA + EO don't have the
+  // ``notification.view_own`` codename (see apps.accounts.seed), so
+  // the bell stays at "— / no badge" for them. The call may 403 in
+  // that case — we silently ignore the failure and keep the previous
+  // count on screen so the badge never blinks.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function tick() {
+      try {
+        const { count } = await getUnreadCount();
+        if (!cancelled) setUnread(count);
+      } catch {
+        if (!cancelled) setUnread((prev) => prev ?? 0);
+      } finally {
+        if (!cancelled) timer = setTimeout(tick, 60_000);
+      }
+    }
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
@@ -310,11 +338,20 @@ export function Topbar({
           <ThemeToggle />
 
           <button
+            onClick={() => router.push("/dashboard/notifications")}
             className="relative inline-flex h-11 w-11 items-center justify-center rounded-full bg-ink-100/60 text-ink-700 ring-1 ring-inset ring-ink-200 transition hover:bg-surface"
-            aria-label="Notifications"
+            aria-label={
+              unread && unread > 0
+                ? `Notifications, ${unread} unread`
+                : "Notifications"
+            }
           >
             <Icon name="bell" className="h-4 w-4" />
-            <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" />
+            {unread != null && unread > 0 ? (
+              <span className="absolute -right-0.5 -top-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold text-white ring-2 ring-white">
+                {unread > 99 ? "99+" : unread}
+              </span>
+            ) : null}
           </button>
 
           {actions}
