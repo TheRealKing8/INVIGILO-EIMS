@@ -37,6 +37,7 @@ class CheckInSerializer(serializers.ModelSerializer):
             "location",
             "recorded_by",
             "recorded_by_email",
+            "signature_image",
             "created_at",
         )
         read_only_fields = (
@@ -81,6 +82,13 @@ class BulkCheckInEntrySerializer(serializers.Serializer):
     location = serializers.CharField(
         max_length=120, required=False, allow_blank=True, default=""
     )
+    # Base64 PNG (with or without the data-URL prefix). The
+    # ``normalise_signature`` helper in services.py strips the prefix
+    # and validates the payload. Optional — bulk entries that don't
+    # need a signature just omit the field.
+    signature_png = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
 
 
 class BulkCheckInSerializer(serializers.Serializer):
@@ -89,9 +97,29 @@ class BulkCheckInSerializer(serializers.Serializer):
     entries = BulkCheckInEntrySerializer(many=True, allow_empty=False)
 
 
+class ScanSerializer(serializers.Serializer):
+    """Body for ``POST /attendance/scan/`` — security officer scans a
+    student's QR (or types their student code) to check them in.
+
+    The ``session_id`` + ``registration_id`` pair is looked up in
+    :class:`StudentRegistration`; the resolved user is the one
+    checked in. The signature is optional.
+    """
+
+    session_id = serializers.UUIDField()
+    registration_id = serializers.UUIDField()
+    location = serializers.CharField(
+        max_length=120, required=False, allow_blank=True, default=""
+    )
+    signature_png = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
+
+
 __all__ = [
     "BulkCheckInEntrySerializer",
     "BulkCheckInSerializer",
     "CheckInSerializer",
+    "ScanSerializer",
     "SelfCheckInSerializer",
 ]

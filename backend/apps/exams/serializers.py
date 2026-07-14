@@ -4,6 +4,7 @@ from apps.academic.models import Course
 from apps.rooms.models import Room
 
 from .models import ExamPeriod, ExamSession
+from .student_registration import StudentRegistration
 
 
 class ExamPeriodSerializer(serializers.ModelSerializer):
@@ -170,3 +171,43 @@ class ExamSessionSerializer(serializers.ModelSerializer):
                 {"course_unit": "course_unit must belong to the selected course"}
             )
         return attrs
+
+
+class StudentRegistrationSerializer(serializers.ModelSerializer):
+    """A per-(session, student) row.
+
+    The ``student_email`` and ``student_name`` denormalised fields
+    let the front-end render the registration list without a second
+    round-trip to /users/. The ``qr_url`` field gives the printable
+    image URL for the door scanner.
+    """
+
+    student_email = serializers.CharField(source="student.email", read_only=True)
+    student_name = serializers.CharField(source="student.full_name", read_only=True)
+    qr_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StudentRegistration
+        fields = (
+            "id",
+            "session",
+            "student",
+            "student_email",
+            "student_name",
+            "student_code",
+            "qr_url",
+            "created_at",
+        )
+        read_only_fields = (
+            "id",
+            "created_at",
+            "student_email",
+            "student_name",
+            "qr_url",
+        )
+
+    def get_qr_url(self, obj: StudentRegistration) -> str:
+        # Relative URL — the frontend concatenates it with the
+        # API base. Keeping it relative means a backend behind a
+        # reverse proxy / different host still works.
+        return f"/api/v1/exams/registrations/{obj.id}/qr.png"

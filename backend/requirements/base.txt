@@ -38,6 +38,11 @@ Pillow>=11.0.0
 reportlab==4.2.5
 openpyxl==3.1.5
 
+# --- QR codes (Phase 15) -----------------------------------------------------
+# Phase 15's per-student registration QRs use the qrcode lib's PIL backend
+# (Pillow is already required above). Pinned to the latest 7.x release.
+qrcode[pil]==7.4.2
+
 # --- API docs ----------------------------------------------------------------
 # drf-spectacular included above; uritemplate is its only required extra
 uritemplate==4.1.1

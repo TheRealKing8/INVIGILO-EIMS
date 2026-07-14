@@ -49,7 +49,9 @@ export type IconName =
   | "gauge"
   | "sun"
   | "moon"
-  | "monitor";
+  | "monitor"
+  | "camera"
+  | "trash";
 
 type IconProps = SVGProps<SVGSVGElement> & { name: IconName };
 
@@ -260,6 +262,17 @@ const paths: Record<IconName, ReactElement> = {
       <path d="M12 14a2 2 0 1 1-2-2" />
       <path d="M12 22a10 10 0 1 1 10-10" />
       <path d="M22 12a10 10 0 0 0-10-10v0" />
+    </>
+  ),
+  camera: (
+    <>
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+      <circle cx="12" cy="13" r="4" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
     </>
   ),
 };

@@ -822,6 +822,95 @@ export function exportAttendanceCsvUrl(sessionId: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Student registrations (Phase 15 — per-(session, student) roster + QR).
+//
+// The EO populates a session's roster from the active STUDENT user pool;
+// each row is what the security officer scans at the door. The QR PNG
+// is fetched as a binary ``<img>`` and the row id is the URL payload
+// (the scanner decodes the id and the backend resolves the row).
+// ---------------------------------------------------------------------------
+export type StudentRegistration = {
+  id: string;
+  session: string;
+  student: string;
+  student_email?: string;
+  student_name?: string;
+  student_code: string;
+  created_at: string;
+};
+
+export const getStudentRegistrations = (
+  params?: Record<string, string | number | undefined>,
+) =>
+  requestWithAuth<Paginated<StudentRegistration>>(
+    `/api/v1/exams/registrations/${qs(params)}`,
+  );
+
+export async function createStudentRegistration(payload: {
+  session: string;
+  student: string;
+  student_code: string;
+}): Promise<StudentRegistration> {
+  return requestWithAuth<StudentRegistration>("/api/v1/exams/registrations/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteStudentRegistration(id: string): Promise<void> {
+  await requestWithAuth<void>(`/api/v1/exams/registrations/${id}/`, {
+    method: "DELETE",
+  });
+}
+
+/**
+ * URL of the printable QR PNG for a single registration row. The browser
+ * uses it as an ``<img src>`` — the backend re-checks the read
+ * permission (EO/HoD/SecOps/Invigilator) before serving the bytes.
+ */
+export function studentRegistrationQrUrl(id: string): string {
+  return `${API_BASE_URL}/api/v1/exams/registrations/${id}/qr.png/`;
+}
+
+/**
+ * Idempotent roster-populator for one session. The backend walks every
+ * active STUDENT user and creates a :class:`StudentRegistration` row
+ * per active student; a session that already has any registrations
+ * is left alone (returns ``created: 0``).
+ */
+export async function populateRegistrations(
+  sessionId: string,
+): Promise<{ created: number }> {
+  return requestWithAuth<{ created: number }>(
+    `/api/v1/exams/registrations/sessions/${sessionId}/populate/`,
+    { method: "POST" },
+  );
+}
+
+/**
+ * Security officer action — scan a student's QR (or type their
+ * student_code fallback) to check them in. The backend resolves the
+ * registration id, looks up the row, and runs the same
+ * ``_upsert`` path as the bulk check-in. The ``signature_png`` is the
+ * bare base64 from a canvas — no data-URL prefix.
+ */
+export async function scanStudent(
+  sessionId: string,
+  registrationId: string,
+  opts?: { signature_png?: string; location?: string },
+): Promise<CheckIn> {
+  return requestWithAuth<CheckIn>("/api/v1/attendance/scan/", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: sessionId,
+      registration_id: registrationId,
+      signature_png: opts?.signature_png ?? "",
+      location: opts?.location ?? "",
+    }),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Notifications (Phase 14 — the in-app event feed + topbar bell)
 // ---------------------------------------------------------------------------
 export type Notification = {

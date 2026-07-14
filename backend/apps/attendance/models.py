@@ -59,6 +59,15 @@ class CheckIn(BaseModel):
         related_name="checkins_recorded",
         help_text="User who created this row. Equal to ``user`` for self check-in; equal to the security officer for bulk check-in.",
     )
+    # Base64-encoded PNG of the door e-signature (Phase 15). Empty for
+    # self check-ins or for bulk entries where no signature was
+    # collected. The payload is small (frontend canvas resizes to
+    # ~30-60 KB) so a TextField is enough — no S3 work in this phase.
+    signature_image = models.TextField(
+        blank=True,
+        default="",
+        help_text="Base64-encoded PNG of the e-signature captured at the door.",
+    )
 
     class Meta:
         ordering = ("-at",)

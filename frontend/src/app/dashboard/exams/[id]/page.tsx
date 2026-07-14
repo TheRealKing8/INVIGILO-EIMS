@@ -495,6 +495,31 @@ export default function ExamSessionDetailPage() {
             )}
           </Card>
 
+          {/* Student registrations ------------------------------------ */}
+          <Card>
+            <CardHeader
+              eyebrow="Field"
+              title="Student registrations"
+              subtitle="Per-student QR codes + e-signature roster for the door scanner."
+            />
+            <div className="mt-5 space-y-3">
+              {canViewRoster ? (
+                <Button
+                  variant="ghost"
+                  size="md"
+                  iconLeft="users"
+                  onClick={() => router.push(`/dashboard/exams/${id}/registrations`)}
+                >
+                  Manage registrations
+                </Button>
+              ) : (
+                <p className="text-xs text-ink-500">
+                  You don't have permission to view the student roster.
+                </p>
+              )}
+            </div>
+          </Card>
+
           {/* Check-ins ------------------------------------------------ */}
           <Card>
             <CardHeader

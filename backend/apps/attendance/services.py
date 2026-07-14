@@ -1,23 +1,31 @@
 """Service layer for the attendance app.
 
-Two small helpers:
+Three small helpers:
+
   * :func:`compute_late` — given an :class:`ExamSession` and a check-in
     timestamp, return whether the attendee was late (more than 10
     minutes after the session start).
   * :func:`build_roster` — given a session, return the structured
     payload for the roster view and the CSV export (invigilator and
     student tables with present/late/expected counts).
+  * :func:`normalise_signature` — validate and strip a base64 PNG
+    payload from the door scanner (Phase 15).
 
 Kept in a service module rather than the view so the CSV export and
-the JSON roster share one source of truth for the data shape.
+the JSON roster share one source of truth for the data shape, and so
+the signature payload is sanitised in one place regardless of which
+endpoint (self / bulk / scan) collected it.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable
 
 from django.db.models import QuerySet
+from rest_framework.exceptions import ValidationError
 
 from apps.allocations.models import Allocation
 from apps.exams.models import ExamSession
@@ -209,10 +217,40 @@ def csv_safe(value: object) -> str:
     return s
 
 
+# Maximum decoded size of the e-signature PNG. The frontend resizes
+# the canvas to a 2x retina 320x320 so a typical draw lands at
+# 30-60 KB; 200 KB is a generous ceiling that keeps the request
+# well under Django's 2.5 MB default body limit.
+_MAX_SIGNATURE_BYTES = 200_000
+
+
+def normalise_signature(raw: str) -> str:
+    """Validate a base64 PNG from the door scanner and return the
+    bare base64 string for storage.
+
+    Strips a leading ``data:image/png;base64,`` prefix if present.
+    Empty input returns empty (no signature captured). Raises
+    :class:`ValidationError` on malformed / oversized payloads.
+    """
+    if not raw:
+        return ""
+    s = raw.strip()
+    if s.startswith("data:image/png;base64,"):
+        s = s[len("data:image/png;base64,"):]
+    try:
+        decoded = base64.b64decode(s, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValidationError({"signature_png": "must be base64"}) from exc
+    if len(decoded) > _MAX_SIGNATURE_BYTES:
+        raise ValidationError({"signature_png": "signature image too large"})
+    return s
+
+
 __all__ = [
     "LATE_GRACE_MINUTES",
     "RosterEntry",
     "build_roster",
     "compute_late",
     "csv_safe",
+    "normalise_signature",
 ]

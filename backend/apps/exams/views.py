@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -10,7 +11,14 @@ from apps.core.permissions import HasPermission
 from apps.invigilators.models import InvigilatorProfile
 
 from .models import ExamPeriod, ExamSession
-from .serializers import ExamPeriodSerializer, ExamSessionSerializer
+from .qr import qr_png_response
+from .serializers import (
+    ExamPeriodSerializer,
+    ExamSessionSerializer,
+    StudentRegistrationSerializer,
+)
+from .services import ensure_registrations
+from .student_registration import StudentRegistration
 
 
 # Lifecycle transitions allowed for an ExamSession. Each key is the
@@ -280,3 +288,74 @@ class ExamSessionViewSet(viewsets.ModelViewSet):
             update_fields.append("room")
         session.save(update_fields=update_fields)
         return Response(self.get_serializer(session).data, status=status.HTTP_200_OK)
+
+
+# Permission sets used by StudentRegistrationViewSet.
+# Read is open to the same roles that can see the attendance roster
+# (operations + security). Write is a staff operation (EO).
+_REG_READ_PERMS = (
+    "people.student.crud",
+    "exam.session.crud",
+    "attendance.view",
+    "exam.session.view_own",
+)
+_REG_WRITE_PERMS = (
+    "people.student.crud",
+    "exam.session.crud",
+)
+
+
+@extend_schema(tags=["exams"])
+class StudentRegistrationViewSet(viewsets.ModelViewSet):
+    """Per-(session, student) registration rows.
+
+    The door scanner endpoint (``/api/v1/attendance/scan/``) takes
+    a ``registration_id`` and looks the row up directly. The
+    ``qr.png`` action renders a printable PNG of the row's id —
+    that's the QR code the student shows on the door card.
+    """
+
+    queryset = StudentRegistration.objects.select_related(
+        "session", "session__course", "student"
+    )
+    serializer_class = StudentRegistrationSerializer
+    filterset_fields = ("session", "student")
+    search_fields = ("student__email", "student__full_name", "student_code")
+    ordering_fields = ("session__starts_at", "created_at")
+    ordering = ("session__starts_at", "student__email")
+
+    def get_permissions(self):  # type: ignore[no-untyped-def]
+        if self.action in {"list", "retrieve", "qr_png"}:
+            return [HasPermission.with_codes(*_REG_READ_PERMS)()]
+        return [HasPermission.with_codes(*_REG_WRITE_PERMS)()]
+
+    @extend_schema(
+        tags=["exams"],
+        summary="Printable QR code (PNG) for the registration row.",
+        responses={200: OpenApiResponse(description="PNG image.")},
+    )
+    @action(detail=True, methods=["get"], url_path="qr.png")
+    def qr_png(self, request, pk=None):  # type: ignore[no-untyped-def]
+        return qr_png_response(self.get_object())
+
+    @extend_schema(
+        tags=["exams"],
+        summary="Populate this session's roster from active STUDENT users.",
+        responses={
+            200: OpenApiResponse(description="`{created: int}` — number of new rows."),
+        },
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path=r"sessions/(?P<session_id>[^/.]+)/populate",
+        permission_classes=[HasPermission.with_codes(*_REG_WRITE_PERMS)],
+    )
+    def populate(self, request, session_id=None):  # type: ignore[no-untyped-def]
+        """Walk every active STUDENT user and create a
+        :class:`StudentRegistration` row for this session. No-op if
+        the session already has any registrations.
+        """
+        session = get_object_or_404(ExamSession, id=session_id)
+        created = ensure_registrations(session)
+        return Response({"created": created}, status=status.HTTP_200_OK)

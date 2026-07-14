@@ -183,6 +183,16 @@ export default function AttendanceSessionPage() {
       }
       actions={
         <div className="flex items-center gap-2">
+          {canMarkPresent ? (
+            <Button
+              variant="primary"
+              size="md"
+              iconLeft="camera"
+              onClick={() => router.push(`/dashboard/attendance/scan?session=${id}`)}
+            >
+              Scan student
+            </Button>
+          ) : null}
           <a
             href={exportAttendanceCsvUrl(id)}
             target="_blank"

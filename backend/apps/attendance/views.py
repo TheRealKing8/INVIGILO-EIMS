@@ -3,6 +3,8 @@
 The endpoint surface is small and intentionally write-light:
 
   * ``POST /attendance/checkin/``  — invigilator or student says "I'm here".
+  * ``POST /attendance/scan/``      — security officer scans a
+    student's QR (or types their code) to check them in (Phase 15).
   * ``POST /attendance/sessions/{id}/bulk-checkin/`` — security officer
     runs the door roster and marks multiple people in one call.
   * ``GET  /attendance/sessions/{id}/roster/`` — JSON roster.
@@ -27,14 +29,16 @@ from rest_framework.response import Response
 from apps.allocations.models import Allocation
 from apps.core.permissions import HasPermission
 from apps.exams.models import ExamSession
+from apps.exams.student_registration import StudentRegistration
 
 from .models import CheckIn
 from .serializers import (
     BulkCheckInSerializer,
     CheckInSerializer,
+    ScanSerializer,
     SelfCheckInSerializer,
 )
-from .services import build_roster, compute_late
+from .services import build_roster, compute_late, normalise_signature
 
 
 @extend_schema(tags=["attendance"])
@@ -116,6 +120,16 @@ class CheckInViewSet(viewsets.GenericViewSet):
                 raise ValidationError(
                     {"entries": f"Unknown user_id: {entry['user_id']}"}
                 )
+            # ``signature_image`` is only set on a fresh row; existing
+            # rows keep their first-scan signature (the "first wins"
+            # rule from :func:`_upsert`). The signature is normalised
+            # once per entry, not inside the get_or_create, so a
+            # ValidationError short-circuits the loop before we touch
+            # the database.
+            try:
+                signature = normalise_signature(entry.get("signature_png", ""))
+            except ValidationError:
+                raise
             row, was_created = CheckIn.objects.get_or_create(
                 session=session,
                 user=user,
@@ -125,6 +139,7 @@ class CheckInViewSet(viewsets.GenericViewSet):
                     "late": entry.get("late", compute_late(session, now)),
                     "location": entry.get("location", ""),
                     "recorded_by": request.user,
+                    "signature_image": signature,
                 },
             )
             if was_created:
@@ -182,15 +197,20 @@ class CheckInViewSet(viewsets.GenericViewSet):
             late=compute_late(session, now),
             location=body.validated_data.get("location", ""),
             recorded_by=request.user,
+            # Self check-in never carries a door signature — the
+            # security officer's pad is a separate flow.
+            signature="",
             now=now,
         )
 
-    def _upsert(self, *, session, user, kind, method, late, location, recorded_by, now):  # type: ignore[no-untyped-def]
+    def _upsert(self, *, session, user, kind, method, late, location, recorded_by, signature, now):  # type: ignore[no-untyped-def]
         """get_or_create the row, returning the JSON response.
 
         We never overwrite an existing row — the first check-in wins.
         A second self check-in is a no-op (200 with the existing row)
-        rather than a 409, so the frontend can be idempotent.
+        rather than a 409, so the frontend can be idempotent. The
+        same rule applies to the e-signature: a second scan with a
+        new signature is silently dropped.
         """
         row, created = CheckIn.objects.get_or_create(
             session=session,
@@ -201,12 +221,59 @@ class CheckInViewSet(viewsets.GenericViewSet):
                 "late": late,
                 "location": location,
                 "recorded_by": recorded_by,
+                "signature_image": signature,
             },
         )
         body = CheckInSerializer(row).data
         return Response(
             body,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    # ------------------------------------------------------------------
+    # QR scan (security officer)
+    # ------------------------------------------------------------------
+    @extend_schema(
+        tags=["attendance"],
+        summary="Security officer: scan a student's QR (or type their code) to check them in.",
+        request=ScanSerializer,
+        responses={
+            201: CheckInSerializer,
+            200: OpenApiResponse(
+                response=CheckInSerializer,
+                description="Already checked in — the existing row is returned.",
+            ),
+            404: OpenApiResponse(description="Registration not found for this session."),
+        },
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="scan",
+        permission_classes=[HasPermission.with_codes("attendance.checkin_any")],
+    )
+    def scan(self, request):  # type: ignore[no-untyped-def]
+        """Resolve a (session_id, registration_id) pair and check the
+        registered student in. Idempotent on (session, user, kind)."""
+        body = ScanSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        reg = get_object_or_404(
+            StudentRegistration,
+            id=body.validated_data["registration_id"],
+            session_id=body.validated_data["session_id"],
+        )
+        signature = normalise_signature(body.validated_data.get("signature_png", ""))
+        now = timezone.now()
+        return self._upsert(
+            session=reg.session,
+            user=reg.student,
+            kind=CheckIn.Kind.STUDENT,
+            method=CheckIn.Method.BULK,
+            late=compute_late(reg.session, now),
+            location=body.validated_data.get("location", ""),
+            recorded_by=request.user,
+            signature=signature,
+            now=now,
         )
 
 

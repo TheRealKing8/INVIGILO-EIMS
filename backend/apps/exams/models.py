@@ -124,4 +124,10 @@ class ExamSession(BaseModel):
             )
 
 
-__all__ = ["ExamPeriod", "ExamSession"]
+__all__ = ["ExamPeriod", "ExamSession", "StudentRegistration"]
+
+# Re-export StudentRegistration so Django's model discovery (which
+# walks ``models.py``) finds the table. The canonical class lives in
+# ``apps.exams.student_registration`` to keep this file focused on
+# ExamPeriod / ExamSession.
+from .student_registration import StudentRegistration  # noqa: E402,F401

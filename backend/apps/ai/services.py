@@ -6,6 +6,20 @@ intents (``status``, ``conflicts``, ``invigilators``, ``sessions``,
 ``incidents``, ``help``). For each intent, a deterministic template
 renders a reply that names real DB values, not invented ones.
 
+# ---------------------------------------------------------------------------
+# Deferred AI features (out of scope for the current brief)
+# ---------------------------------------------------------------------------
+# "AI-powered anomaly detection" — flagging unusual check-in patterns,
+# late arrivals clustering, suspicious incident bursts.  Requires a
+# labeled malpractice dataset to train on; we have none. Re-evaluate
+# once the audit log + incident history carry enough rows to label.
+#
+# "AI room recommendation" — LLM-assisted seating picks. Phase 17.
+#
+# "Predictive analytics" — workload forecasts, conflict risk scores.
+# Phase 17.
+# ---------------------------------------------------------------------------
+
 The output is plain English with a few ``$placeholders`` for
 numbers and names. There is no chain-of-thought, no tool use beyond
 the four ORM queries below, and no fabricated details.
