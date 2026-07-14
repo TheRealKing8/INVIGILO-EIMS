@@ -390,7 +390,27 @@ export async function requestWithAuth<T>(path: string, init: RequestInit = {}): 
     return await rawRequest<T>(path, init, access ?? undefined);
   } catch (err) {
     const status = (err as { status?: number }).status;
-    if (status !== 401 || !access) {
+    if (status !== 401 && status !== 403) {
+      throw err;
+    }
+    if (!access) {
+      throw err;
+    }
+    // A 401 is "access token expired" — refresh + retry is always
+    // correct. A 403 is normally a real authorization decision and we
+    // would NOT retry — but for the dashboard we treat it as a stale
+    // ``permissions`` claim when the access token is still alive
+    // (the refresh cookie is valid, the server's role/permission
+    // state just moved on since the JWT was minted). One refresh +
+    // retry: if the new token now carries the required codename, the
+    // call succeeds. If it still 403s, that's a real authorization
+    // decision and we surface the original error.
+    //
+    // We don't extend this recovery to logout/refresh/login/verify-otp
+    // — those live in ``/api/v1/auth/`` and a 403 there is meaningful
+    // (e.g. trying to logout without a refresh cookie).
+    const authPath = path.startsWith("/api/v1/auth/");
+    if (status === 403 && authPath) {
       throw err;
     }
     // Try a refresh. The browser attaches the httpOnly cookie; the
@@ -407,6 +427,8 @@ export async function requestWithAuth<T>(path: string, init: RequestInit = {}): 
       // Retry once with the new access token.
       return await rawRequest<T>(path, init, tokens.access);
     } catch (refreshErr) {
+      // The refresh itself failed (refresh cookie gone or revoked).
+      // Clear local tokens and let the auth callback redirect.
       clearAuthTokens();
       onUnauthenticated?.();
       throw refreshErr;

@@ -52,6 +52,8 @@ def admin_user(admin_role: Role) -> User:
 # Login
 # ---------------------------------------------------------------------------
 def test_admin_login_returns_requires_otp(client: APIClient, admin_user: User) -> None:
+    from django.core import mail
+
     response = client.post(
         reverse("auth:auth-login"),
         {"email": "admin@x.com", "password": "S3cur3Passw0rd!"},
@@ -64,6 +66,19 @@ def test_admin_login_returns_requires_otp(client: APIClient, admin_user: User) -
     assert "access" not in body
     # Exactly one active OTP row for this user.
     assert LoginOTP.objects.filter(user=admin_user, consumed_at__isnull=True).count() == 1
+    # The OTP email was actually sent (in dev this is the console
+    # backend, in tests it's locmem). ``CELERY_TASK_ALWAYS_EAGER``
+    # makes the ``.delay()`` call run synchronously so the mailbox
+    # already has the message by the time this assertion runs.
+    assert len(mail.outbox) == 1
+    sent = mail.outbox[0]
+    assert sent.to == [admin_user.email]
+    # The 6-digit code is in the body. We don't assert the exact
+    # value (it's random) — we just check that a 6-digit token
+    # appears somewhere in the rendered text.
+    import re
+
+    assert re.search(r"\b\d{6}\b", sent.body) is not None
 
 
 def test_invigilator_login_skips_otp(client: APIClient, verified_user: User) -> None:

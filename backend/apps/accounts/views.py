@@ -95,6 +95,25 @@ class AuthViewSet(viewsets.ViewSet):
             from .tasks import send_login_otp_email
 
             send_login_otp_email.delay(str(user.id), code)
+            # Dev convenience: with the console email backend the OTP
+            # body is printed by the email task, but the output can be
+            # drowned out by request logs. Echo the code to the
+            # runserver stdout with a clear banner so the developer
+            # can copy it without hunting through the email block.
+            # This is gated by ``DEBUG`` — prod never prints the
+            # plain code anywhere.
+            from django.conf import settings
+
+            if settings.DEBUG:
+                print(
+                    "\n"
+                    "  ┌──────────────────────────────────────────────────────────┐\n"
+                    f"  │  OTP for {user.email:<46s} │\n"
+                    f"  │  code = {code:<46s} │\n"
+                    f"  │  otp_token = {otp_token:<40s} │\n"
+                    "  └──────────────────────────────────────────────────────────┘\n",
+                    flush=True,
+                )
             return Response(
                 {"requires_otp": True, "otp_token": otp_token},
                 status=status.HTTP_200_OK,

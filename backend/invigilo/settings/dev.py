@@ -29,3 +29,20 @@ CACHES = {
         "LOCATION": "invigilo-local",
     }
 }
+
+# ----------------------------------------------------------------------------
+# Celery — run tasks synchronously in dev.
+# ----------------------------------------------------------------------------
+# Without this, ``send_login_otp_email.delay(...)`` queues the email to
+# Redis and a Celery worker has to pick it up. In a local dev session
+# (no worker running) the OTP email never gets sent, the admin can't
+# sign in, and the console gives no hint that anything is broken.
+#
+# ``CELERY_TASK_ALWAYS_EAGER=True`` runs the task in-process, so the
+# email prints to the dev console (via the console backend above) the
+# moment the login endpoint returns. ``CELERY_TASK_EAGER_PROPAGATES``
+# makes exceptions raised inside the task surface as 500s — handy in
+# dev, painful in prod (where you want the broker to retry).
+# ----------------------------------------------------------------------------
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True
