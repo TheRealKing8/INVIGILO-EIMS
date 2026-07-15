@@ -11,7 +11,7 @@
 import { expect, test } from "@playwright/test";
 
 const SKIP = !!process.env.SKIP_E2E;
-const EMAIL = process.env.E2E_USER_EMAIL ?? "admin@invigilo.local";
+const EMAIL = process.env.E2E_USER_EMAIL ?? "admininvigilo@gmail.com";
 const PASSWORD = process.env.E2E_USER_PASSWORD ?? "ChangeMe123!";
 
 let signedIn = false;

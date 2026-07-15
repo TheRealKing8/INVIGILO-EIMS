@@ -561,7 +561,7 @@ EMAIL_PORT=1025
 EMAIL_HOST_USER=
 EMAIL_HOST_PASSWORD=
 EMAIL_USE_TLS=0
-EMAIL_FROM=noreply@invigilo.local
+EMAIL_FROM=noreply.invigilo@gmail.com
 
 # Frontend
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000

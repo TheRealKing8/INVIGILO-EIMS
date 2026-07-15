@@ -209,25 +209,25 @@ def _ensure_user(*, email, full_name, password, roles):
     return u, created
 
 officer, _ = _ensure_user(
-    email="officer1@invigilo.local",
+    email="officer.invigilo@gmail.com",
     full_name="Patricia Wairimu",
     password="Demo@2026Officer",
     roles=["EXAMINATION_OFFICER"],
 )
 hod, _ = _ensure_user(
-    email="hod.cs@invigilo.local",
+    email="hod.invigilo@gmail.com",
     full_name="Dr. Samuel Mwangi",
     password="Demo@2026Hod",
     roles=["HEAD_OF_DEPARTMENT"],
 )
 dean, _ = _ensure_user(
-    email="dean.sci@invigilo.local",
+    email="dean.invigilo@gmail.com",
     full_name="Prof. Grace Achieng",
     password="Demo@2026Dean",
     roles=["FACULTY_DEAN"],
 )
 student, _ = _ensure_user(
-    email="student1@invigilo.local",
+    email="student.invigilo@gmail.com",
     full_name="Brian Otieno",
     password="Demo@2026Student",
     roles=["STUDENT"],
@@ -236,19 +236,19 @@ student, _ = _ensure_user(
 # 12 invigilators total: inv1..inv3 from the original seed-demo-data.ps1
 # (we re-upsert here so the seed is self-contained) + inv4..inv12.
 inv_specs = [
-    # (email,                       full_name,           department_code, max, rating)
-    ("inv1@invigilo.local",         "Alice Wanjiku",     "CS",  6, Decimal("4.50")),
-    ("inv2@invigilo.local",         "Brian Kiprotich",   "MTH", 5, Decimal("4.30")),
-    ("inv3@invigilo.local",         "Carol Otieno",      "CS",  4, Decimal("4.60")),
-    ("inv4@invigilo.local",         "David Kamau",       "MTH", 5, Decimal("4.40")),
-    ("inv5@invigilo.local",         "Esther Nyambura",   "CS",  6, Decimal("4.80")),
-    ("inv6@invigilo.local",         "Faith Wambui",      "ENG", 4, Decimal("4.20")),
-    ("inv7@invigilo.local",         "George Maina",      "CS",  5, Decimal("4.50")),
-    ("inv8@invigilo.local",         "Hannah Akinyi",     "MTH", 4, Decimal("4.10")),
-    ("inv9@invigilo.local",         "Ibrahim Hassan",    "ENG", 5, Decimal("4.70")),
-    ("inv10@invigilo.local",        "Joyce Cheruiyot",   "CS",  6, Decimal("4.90")),
-    ("inv11@invigilo.local",        "Kevin Mutiso",      "MTH", 5, Decimal("4.30")),
-    ("inv12@invigilo.local",        "Linet Auma",        "ENG", 4, Decimal("4.40")),
+    # (email,                            full_name,           department_code, max, rating)
+    ("invigilator1.invigilo@gmail.com",  "Alice Wanjiku",     "CS",  6, Decimal("4.50")),
+    ("invigilator2.invigilo@gmail.com",  "Brian Kiprotich",   "MTH", 5, Decimal("4.30")),
+    ("invigilator3.invigilo@gmail.com",  "Carol Otieno",      "CS",  4, Decimal("4.60")),
+    ("invigilator4.invigilo@gmail.com",  "David Kamau",       "MTH", 5, Decimal("4.40")),
+    ("invigilator5.invigilo@gmail.com",  "Esther Nyambura",   "CS",  6, Decimal("4.80")),
+    ("invigilator6.invigilo@gmail.com",  "Faith Wambui",      "ENG", 4, Decimal("4.20")),
+    ("invigilator7.invigilo@gmail.com",  "George Maina",      "CS",  5, Decimal("4.50")),
+    ("invigilator8.invigilo@gmail.com",  "Hannah Akinyi",     "MTH", 4, Decimal("4.10")),
+    ("invigilator9.invigilo@gmail.com",  "Ibrahim Hassan",    "ENG", 5, Decimal("4.70")),
+    ("invigilator10.invigilo@gmail.com", "Joyce Cheruiyot",   "CS",  6, Decimal("4.90")),
+    ("invigilator11.invigilo@gmail.com", "Kevin Mutiso",      "MTH", 5, Decimal("4.30")),
+    ("invigilator12.invigilo@gmail.com", "Linet Auma",        "ENG", 4, Decimal("4.40")),
 ]
 invig_users = []
 for email, nm, dept_code, mx, rating in inv_specs:
@@ -457,10 +457,10 @@ Write-Host "    Email:    admininvigilo@gmail.com" -ForegroundColor Yellow
 Write-Host "    Password: Invigilo@2026" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  Demo accounts (password = Demo@2026<Role>):" -ForegroundColor Cyan
-Write-Host "    officer1@invigilo.local    -- Examination Officer" -ForegroundColor Yellow
-Write-Host "    hod.cs@invigilo.local      -- Head of Department (CS)" -ForegroundColor Yellow
-Write-Host "    dean.sci@invigilo.local    -- Faculty Dean (SCI)" -ForegroundColor Yellow
-Write-Host "    inv1..inv12@invigilo.local -- Invigilators" -ForegroundColor Yellow
-Write-Host "    student1@invigilo.local    -- Student" -ForegroundColor Yellow
+Write-Host "    officer.invigilo@gmail.com    -- Examination Officer" -ForegroundColor Yellow
+Write-Host "    hod.invigilo@gmail.com        -- Head of Department" -ForegroundColor Yellow
+Write-Host "    dean.invigilo@gmail.com      -- Faculty Dean" -ForegroundColor Yellow
+Write-Host "    invigilator1..12.invigilo@gmail.com -- Invigilators" -ForegroundColor Yellow
+Write-Host "    student.invigilo@gmail.com    -- Student" -ForegroundColor Yellow
 Write-Host ""
 Read-Host "Press Enter to close"

@@ -298,7 +298,7 @@ export default function ExamRegistrationsPage() {
                   onChange={(e) => setAddEmail(e.target.value)}
                   required
                   className="mt-1 block w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
-                  placeholder="student@invigilo.local"
+                  placeholder="student.invigilo@gmail.com"
                 />
               </label>
               <label className="block text-xs font-semibold uppercase tracking-[0.14em] text-ink-500">

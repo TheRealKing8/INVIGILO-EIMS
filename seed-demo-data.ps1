@@ -38,7 +38,7 @@ else:
     ], start=1):
         from apps.accounts.models import User
         u, _ = User.objects.update_or_create(
-            email=f"inv{i}@invigilo.local",
+            email=f"invigilator{i}.invigilo@gmail.com",
             defaults={"full_name": nm, "is_active": True, "is_email_verified": True},
         )
         u.set_password("ChangeMe123!")
