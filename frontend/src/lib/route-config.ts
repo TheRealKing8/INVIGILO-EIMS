@@ -139,6 +139,23 @@ export const ROUTE_ACCESS: ReadonlyArray<RouteAccess> = [
     ]),
   },
   {
+    href: "/dashboard/analytics",
+    label: "Analytics",
+    description: "Control-room KPIs, trends, workload",
+    icon: "chart",
+    // Mirrors the seeded ``analytics.view`` codename (see
+    // ``backend/apps/accounts/seed.py``). The page works for every
+    // role here; the workload slice narrows to the invigilator's
+    // own allocations when ``primary_role`` is INVIGILATOR.
+    roles: new Set<RoleCode>([
+      "SYSTEM_ADMINISTRATOR",
+      "EXAMINATION_OFFICER",
+      "FACULTY_DEAN",
+      "HEAD_OF_DEPARTMENT",
+      "INVIGILATOR",
+    ]),
+  },
+  {
     href: "/dashboard/audit",
     label: "Audit log",
     description: "Who changed what, and when",

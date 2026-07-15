@@ -289,6 +289,55 @@ export type DashboardSummary = {
 };
 
 // ---------------------------------------------------------------------------
+// Analytics (Phase 16)
+// ---------------------------------------------------------------------------
+// Shape mirrors the AnalyticsSummaryView response in
+// `backend/apps/analytics/views.py` — single aggregator endpoint that
+// returns the full control-room view in one round-trip. See
+// `apps/analytics/services.py` for the per-slice query details and
+// the role-based scoping (INVIGILATOR gets a workload list narrowed
+// to their own allocations; everything else is org-wide).
+export type AnalyticsWorkloadRow = {
+  name: string;
+  email: string;
+  allocated: number;
+  max_per_cycle: number;
+  fill_pct: number;
+};
+
+export type AnalyticsAttendanceBucket = {
+  week_start: string; // ISO date (Monday of the bucket)
+  count: number;
+};
+
+export type AnalyticsSessionsByDay = {
+  date: string; // ISO date
+  count: number;
+  courses: string[];
+};
+
+export type AnalyticsIncidentsBySeverity = {
+  low: number;
+  medium: number;
+  high: number;
+  critical: number;
+};
+
+export type AnalyticsSummary = {
+  period_code: string | null;
+  coverage: number | null; // 0–100 (AllocationRun.capacity_utilisation × 100)
+  upcoming_sessions_count: number;
+  checkins_today: number;
+  late_count_today: number;
+  open_incidents_count: number;
+  invigilator_workload: AnalyticsWorkloadRow[];
+  attendance_trend: AnalyticsAttendanceBucket[]; // 12 weekly buckets
+  sessions_by_day: AnalyticsSessionsByDay[]; // next 7 days
+  incidents_by_severity: AnalyticsIncidentsBySeverity;
+  generated_at: string; // ISO datetime
+};
+
+// ---------------------------------------------------------------------------
 // Storage
 // ---------------------------------------------------------------------------
 const STORAGE_KEYS = {
@@ -406,11 +455,25 @@ export async function requestWithAuth<T>(path: string, init: RequestInit = {}): 
     // call succeeds. If it still 403s, that's a real authorization
     // decision and we surface the original error.
     //
-    // We don't extend this recovery to logout/refresh/login/verify-otp
-    // — those live in ``/api/v1/auth/`` and a 403 there is meaningful
-    // (e.g. trying to logout without a refresh cookie).
-    const authPath = path.startsWith("/api/v1/auth/");
-    if (status === 403 && authPath) {
+    // We don't extend this recovery to the auth *action* endpoints
+    // (login, refresh, verify-otp, logout, register, password
+    // reset) — a 403 there is meaningful (e.g. trying to logout
+    // without a refresh cookie). Critically, this list is a
+    // hand-maintained set of action-path *suffixes*, not a prefix
+    // like ``/api/v1/auth/`` — the prefix would also match
+    // ``/api/v1/auth/me/`` and silently skip the refresh-retry on
+    // the dashboard's primary 403 case. See
+    // ``invigilo-phase-11-otp-dev-403-refresh.md``.
+    const isAuthAction = [
+      "/login/",
+      "/refresh/",
+      "/verify-otp/",
+      "/logout/",
+      "/register/",
+      "/password/reset/",
+      "/password/reset/confirm/",
+    ].some((s) => path.endsWith(s));
+    if (status === 403 && isAuthAction) {
       throw err;
     }
     // Try a refresh. The browser attaches the httpOnly cookie; the
@@ -955,6 +1018,23 @@ export async function getUnreadCount(): Promise<{ count: number }> {
 export function calendarFeedUrl(): string {
   return `${API_BASE_URL}/api/v1/calendar/feed.ics`;
 }
+
+/**
+ * Per-session .ics URL (Phase 16). The backend resolves the session,
+ * runs the same authorisation check as the per-session GET endpoint
+ * (operations roles see any; INVIGILATOR needs a confirmed
+ * allocation; STUDENT needs a StudentRegistration or the session
+ * being in the public upcoming list), and returns a 1-event
+ * VCALENDAR. Returns 404 (not 403) when the caller is not
+ * authorised, to avoid leaking existence.
+ */
+export function calendarSessionUrl(sessionId: string): string {
+  return `${API_BASE_URL}/api/v1/calendar/sessions/${sessionId}.ics`;
+}
+
+// Analytics (Phase 16)
+export const getAnalyticsSummary = () =>
+  requestWithAuth<AnalyticsSummary>("/api/v1/analytics/summary/");
 
 // Rooms
 export const getRooms = (params?: Record<string, string | number | undefined>) =>

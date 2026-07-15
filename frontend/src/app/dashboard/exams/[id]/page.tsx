@@ -25,6 +25,7 @@ import { ProgressBar } from "@/components/ui/viz";
 import { StatusBanner } from "@/components/ui/status-banner";
 import {
   calendarFeedUrl,
+  calendarSessionUrl,
   cancelExamSession,
   draftExamSession,
   getAllocationForSession,
@@ -262,14 +263,28 @@ export default function ExamSessionDetailPage() {
       subtitle={session ? (session.course_title ?? "Examination session") : "Loading…"}
       actions={
         <div className="flex items-center gap-2">
-          <a
-            href={calendarFeedUrl()}
-            download
-            className="inline-flex h-10 items-center gap-2 rounded-full bg-ink-100/60 px-4 text-sm font-medium text-ink-700 ring-1 ring-inset ring-ink-200 transition hover:bg-surface"
-          >
-            <Icon name="download" className="h-4 w-4" />
-            Add to calendar
-          </a>
+          <div className="flex items-center gap-1 rounded-full bg-ink-100/60 p-1 ring-1 ring-inset ring-ink-200">
+            <a
+              href={calendarFeedUrl()}
+              download
+              className="inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-ink-700 transition hover:bg-surface"
+              title="Download your whole calendar feed"
+            >
+              <Icon name="download" className="h-3.5 w-3.5" />
+              All my sessions
+            </a>
+            {session ? (
+              <a
+                href={calendarSessionUrl(session.id)}
+                download
+                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-white px-3 text-xs font-medium text-ink-900 shadow-sm transition hover:bg-brand-50"
+                title="Download just this session"
+              >
+                <Icon name="calendar" className="h-3.5 w-3.5" />
+                This session
+              </a>
+            ) : null}
+          </div>
           <Button
             variant="ghost"
             size="md"

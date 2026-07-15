@@ -68,6 +68,7 @@ LOCAL_APPS = [
     "apps.audit",
     "apps.ai",
     "apps.notifications",
+    "apps.analytics",
 ]
 
 THIRD_PARTY_APPS = [
@@ -323,6 +324,7 @@ SPECTACULAR_SETTINGS = {
         {"name": "attendance", "description": "Check-in events for invigilators and students at exam sessions."},
         {"name": "reports", "description": "Report exports (PDF / Excel / CSV) and downloads."},
         {"name": "audit", "description": "Append-only audit log of consequential writes."},
+        {"name": "analytics", "description": "Aggregated KPIs for the operator dashboard (coverage, workload, attendance trends)."},
     ],
 }
 

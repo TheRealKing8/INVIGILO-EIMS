@@ -70,6 +70,25 @@ function fmtTime(iso: string): string {
   });
 }
 
+// Long, unambiguous day header. The audit log is a forensic record,
+// so we show weekday + day + month + year (matches the format the
+// backend stores in ``created_at``, which is UTC ISO 8601). Using a
+// single ``Intl.DateTimeFormat`` instance with an explicit timezone
+// keeps the day boundary consistent regardless of the viewer's
+// locale.
+const dayHeaderFormatter = new Intl.DateTimeFormat(undefined, {
+  weekday: "long",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/** ISO date (YYYY-MM-DD) in UTC — used as the grouping key. */
+function dayKey(iso: string): string {
+  return iso.slice(0, 10);
+}
+
 /**
  * Try to map a target_type + target_id pair to a detail page. Falls
  * back to the audit log list (no link) for things we don't expose a
@@ -146,6 +165,33 @@ export default function AuditPage() {
 
   const logs: AuditLog[] = data?.results ?? [];
   const total = data?.count ?? 0;
+
+  // Group logs by UTC day. The backend already returns them sorted
+  // by ``-created_at`` so each group is in chronological order.
+  // When the user filters to a single day (from == to) the day
+  // header is redundant, so we collapse the grouping.
+  const grouped = useMemo(() => {
+    if (fromDate && toDate && fromDate === toDate) {
+      return [{ day: fromDate, label: dayHeaderFormatter.format(new Date(`${fromDate}T00:00:00Z`)), items: logs }];
+    }
+    const map = new Map<string, AuditLog[]>();
+    for (const l of logs) {
+      const key = dayKey(l.created_at);
+      const arr = map.get(key);
+      if (arr) arr.push(l);
+      else map.set(key, [l]);
+    }
+    return Array.from(map.entries()).map(([day, items]) => ({
+      day,
+      label: dayHeaderFormatter.format(new Date(`${day}T00:00:00Z`)),
+      items,
+    }));
+  }, [logs, fromDate, toDate]);
+
+  // Hide the day header entirely when the window is exactly one
+  // day — the section divider would say "Friday" once at the top.
+  const showDayHeaders =
+    !(fromDate && toDate && fromDate === toDate) && grouped.length > 1;
 
   const stats = useMemo(() => {
     const actors = new Set<string>();
@@ -321,93 +367,112 @@ export default function AuditPage() {
                 : "No audit events match the current filter."}
             </div>
           ) : (
-            <ul className="divide-y divide-ink-100">
-              {logs.map((l) => {
-                const href = targetHref(l.target_type, l.target_id);
-                const isOpen = expanded.has(l.id);
-                const hasDiff = !!(l.before || l.after);
-                return (
-                  <li key={l.id} className="px-5 py-4">
-                    <div className="flex items-start gap-3">
-                      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-ink-100 text-ink-700 ring-1 ring-inset ring-ink-200">
-                        <Icon name="shield" className="h-3.5 w-3.5" />
+            <div>
+              {grouped.map((g) => (
+                <section key={g.day}>
+                  {showDayHeaders ? (
+                    <div className="sticky top-0 z-10 -mx-5 flex items-center gap-3 border-b border-ink-100 bg-surface/95 px-5 py-2.5 backdrop-blur">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-50 text-brand-700 ring-1 ring-inset ring-brand-200">
+                        <Icon name="calendar" className="h-3.5 w-3.5" />
                       </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge tone={actionTone(l.action)} withDot>
-                            {l.action}
-                          </Badge>
-                          <span className="text-xs text-ink-500">on</span>
-                          <span className="rounded-md bg-ink-100 px-2 py-0.5 font-mono text-xs font-semibold text-ink-700">
-                            {l.target_type}
-                          </span>
-                          {href ? (
-                            <button
-                              type="button"
-                              onClick={() => router.push(href)}
-                              className="font-mono text-xs text-brand-700 underline-offset-2 hover:underline"
-                              title="Open detail page"
-                            >
-                              {l.target_id.slice(0, 8)}…
-                            </button>
-                          ) : (
-                            <span className="font-mono text-xs text-ink-500">
-                              {l.target_id.slice(0, 8)}…
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-1.5 text-xs text-ink-500">
-                          by{" "}
-                          <span className="font-semibold text-ink-700">
-                            {l.actor_email ?? "system"}
-                          </span>{" "}
-                          · {fmtTime(l.created_at)}
-                          {l.method && l.path ? (
-                            <>
-                              {" "}
-                              · <span className="font-mono text-[11px]">{l.method}</span>{" "}
-                              <span className="font-mono text-[11px]">{l.path}</span>
-                            </>
-                          ) : null}
-                        </p>
-                      </div>
-                      {hasDiff ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          iconRight={isOpen ? "chevron-down" : "chevron-right"}
-                          onClick={() => toggleExpand(l.id)}
-                        >
-                          {isOpen ? "Hide diff" : "Show diff"}
-                        </Button>
-                      ) : (
-                        <span className="text-[11px] text-ink-400">no diff</span>
-                      )}
+                      <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-700">
+                        {g.label}
+                      </h4>
+                      <span className="text-[11px] text-ink-400">
+                        {g.items.length} event{g.items.length === 1 ? "" : "s"}
+                      </span>
                     </div>
-                    {isOpen && hasDiff ? (
-                      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                        <div className="rounded-2xl bg-rose-50/60 p-3 ring-1 ring-inset ring-rose-200/60">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-700">
-                            Before
-                          </p>
-                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-ink-700">
-                            {formatJson(l.before)}
-                          </pre>
-                        </div>
-                        <div className="rounded-2xl bg-emerald-50/60 p-3 ring-1 ring-inset ring-emerald-200/60">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
-                            After
-                          </p>
-                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-ink-700">
-                            {formatJson(l.after)}
-                          </pre>
-                        </div>
-                      </div>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
+                  ) : null}
+                  <ul className="divide-y divide-ink-100">
+                    {g.items.map((l) => {
+                      const href = targetHref(l.target_type, l.target_id);
+                      const isOpen = expanded.has(l.id);
+                      const hasDiff = !!(l.before || l.after);
+                      return (
+                        <li key={l.id} className="px-5 py-4">
+                          <div className="flex items-start gap-3">
+                            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-ink-100 text-ink-700 ring-1 ring-inset ring-ink-200">
+                              <Icon name="shield" className="h-3.5 w-3.5" />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge tone={actionTone(l.action)} withDot>
+                                  {l.action}
+                                </Badge>
+                                <span className="text-xs text-ink-500">on</span>
+                                <span className="rounded-md bg-ink-100 px-2 py-0.5 font-mono text-xs font-semibold text-ink-700">
+                                  {l.target_type}
+                                </span>
+                                {href ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => router.push(href)}
+                                    className="font-mono text-xs text-brand-700 underline-offset-2 hover:underline"
+                                    title="Open detail page"
+                                  >
+                                    {l.target_id.slice(0, 8)}…
+                                  </button>
+                                ) : (
+                                  <span className="font-mono text-xs text-ink-500">
+                                    {l.target_id.slice(0, 8)}…
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-1.5 text-xs text-ink-500">
+                                by{" "}
+                                <span className="font-semibold text-ink-700">
+                                  {l.actor_email ?? "system"}
+                                </span>{" "}
+                                · {fmtTime(l.created_at)}
+                                {l.method && l.path ? (
+                                  <>
+                                    {" "}
+                                    · <span className="font-mono text-[11px]">{l.method}</span>{" "}
+                                    <span className="font-mono text-[11px]">{l.path}</span>
+                                  </>
+                                ) : null}
+                              </p>
+                            </div>
+                            {hasDiff ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                iconRight={isOpen ? "chevron-down" : "chevron-right"}
+                                onClick={() => toggleExpand(l.id)}
+                              >
+                                {isOpen ? "Hide diff" : "Show diff"}
+                              </Button>
+                            ) : (
+                              <span className="text-[11px] text-ink-400">no diff</span>
+                            )}
+                          </div>
+                          {isOpen && hasDiff ? (
+                            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                              <div className="rounded-2xl bg-rose-50/60 p-3 ring-1 ring-inset ring-rose-200/60">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-700">
+                                  Before
+                                </p>
+                                <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-ink-700">
+                                  {formatJson(l.before)}
+                                </pre>
+                              </div>
+                              <div className="rounded-2xl bg-emerald-50/60 p-3 ring-1 ring-inset ring-emerald-200/60">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                                  After
+                                </p>
+                                <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-ink-700">
+                                  {formatJson(l.after)}
+                                </pre>
+                              </div>
+                            </div>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              ))}
+            </div>
           )}
         </Card>
 
