@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { StatusBanner } from "@/components/ui/status-banner";
-import { getExamSessions, calendarFeedUrl, type ExamSession } from "@/lib/api";
+import { getExamSessions, timetableIcsUrl, type ExamSession } from "@/lib/api";
 import { useFetch } from "@/lib/use-fetch";
 
 type Range = "today" | "week" | "next_week" | "all";
@@ -128,7 +128,7 @@ export default function TimetablePage() {
       actions={
         <div className="flex items-center gap-2">
           <a
-            href={calendarFeedUrl()}
+            href={timetableIcsUrl({ range })}
             download
             className="inline-flex h-10 items-center gap-2 rounded-full bg-ink-100/60 px-4 text-sm font-medium text-ink-700 ring-1 ring-inset ring-ink-200 transition hover:bg-surface"
           >

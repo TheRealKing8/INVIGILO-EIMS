@@ -1,5 +1,7 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+from .exports import timetable_ics
 from .views import ExamPeriodViewSet, ExamSessionViewSet, StudentRegistrationViewSet
 
 router = DefaultRouter()
@@ -10,4 +12,10 @@ router.register(r"sessions", ExamSessionViewSet, basename="exam-session")
 # come from the viewset.
 router.register(r"registrations", StudentRegistrationViewSet, basename="student-registration")
 
-urlpatterns = router.urls
+# Phase 18: timetable .ics download. Function view (not a viewset
+# action) so the literal ``.ics`` suffix doesn't fight DRF's
+# format-suffix router. Same pattern as the attendance CSV
+# export in Phase 13 and the per-session .ics in Phase 14.
+urlpatterns = router.urls + [
+    path("timetable.ics", timetable_ics, name="exam-timetable-ics"),
+]

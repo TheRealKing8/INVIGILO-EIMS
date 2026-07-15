@@ -1032,6 +1032,33 @@ export function calendarSessionUrl(sessionId: string): string {
   return `${API_BASE_URL}/api/v1/calendar/sessions/${sessionId}.ics`;
 }
 
+/**
+ * Timetable .ics URL (Phase 18). The backend returns a multi-event
+ * VCALENDAR for the *timetable* (not the user's personal calendar) —
+ * every session matching the optional ``range`` and ``period`` query
+ * params, irrespective of the caller's role.
+ *
+ * Differs from ``calendarFeedUrl()`` in two ways:
+ *
+ * 1. Scope — this is the operations view of "the timetable"
+ *    (range-bounded, not user-scoped). ``calendarFeedUrl`` calls
+ *    ``upcoming_sessions_for(user)`` and returns the caller's own
+ *    sessions only.
+ * 2. Filter — supports ``?range=today|week|next_week|all`` (default
+ *    ``week``, matching the timetable page's default chip) and
+ *    optional ``?period=<uuid>``.
+ */
+export function timetableIcsUrl(params?: {
+  range?: "today" | "week" | "next_week" | "all";
+  period?: string;
+}): string {
+  const usp = new URLSearchParams();
+  if (params?.range) usp.set("range", params.range);
+  if (params?.period) usp.set("period", params.period);
+  const q = usp.toString();
+  return `${API_BASE_URL}/api/v1/exams/timetable.ics${q ? `?${q}` : ""}`;
+}
+
 // Analytics (Phase 16)
 export const getAnalyticsSummary = () =>
   requestWithAuth<AnalyticsSummary>("/api/v1/analytics/summary/");
