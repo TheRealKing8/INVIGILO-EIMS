@@ -47,6 +47,7 @@ Thumbs.db
 
 # ----- Docker / ops -----
 *.log
+*.log.err
 logs/
 tmp/
 temp/
