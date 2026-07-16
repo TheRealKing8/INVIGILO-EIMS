@@ -69,6 +69,7 @@ LOCAL_APPS = [
     "apps.ai",
     "apps.notifications",
     "apps.analytics",
+    "apps.realtime",
 ]
 
 THIRD_PARTY_APPS = [
@@ -258,6 +259,10 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "100/minute",
         "user": "1000/minute",
+        # AI assistant (Phase 19). The LLM call is the expensive bit,
+        # not the auth check; cap per user so a single operator can't
+        # burn through OpenRouter credits.
+        "ai_chat": "30/minute",
     },
 }
 
@@ -285,6 +290,13 @@ SIMPLE_JWT = {
     "ISSUER": env("JWT_ISSUER", default="invigilo"),
     "AUDIENCE": "invigilo-api",
 }
+
+# Expose the signing key as a top-level setting so the QR token
+# service (apps.exams.qr_tokens) can sign with the same secret the
+# JWT layer uses, without a settings.SIMPLE_JWT indirection. Reusing
+# the key is deliberate — see the docstring of qr_tokens.py for the
+# rationale.
+JWT_SIGNING_KEY = SIMPLE_JWT["SIGNING_KEY"]
 
 # ----------------------------------------------------------------------------
 # Refresh-token cookie
@@ -374,6 +386,20 @@ EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=False)
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply.invigilo@gmail.com")
+
+# ----------------------------------------------------------------------------
+# OpenRouter (Phase 19)
+# ----------------------------------------------------------------------------
+# The AI assistant calls OpenRouter's Chat Completions endpoint. The
+# API key is never logged, never sent to the frontend, and falls back
+# to the rule-based assistant (apps.ai.services.compose_reply) when
+# empty. ``OPENROUTER_BASE_URL`` is the standard OpenAI-shaped base;
+# default works with the public OpenRouter service.
+OPENROUTER_API_KEY = env("OPENROUTER_API_KEY", default="")
+OPENROUTER_MODEL = env("OPENROUTER_MODEL", default="openai/gpt-4o-mini")
+OPENROUTER_BASE_URL = env("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1")
+OPENROUTER_TIMEOUT_SECONDS = env.float("OPENROUTER_TIMEOUT_SECONDS", default=20.0)
+OPENROUTER_MAX_RETRIES = env.int("OPENROUTER_MAX_RETRIES", default=1)
 
 # ----------------------------------------------------------------------------
 # Logging

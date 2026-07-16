@@ -246,9 +246,52 @@ def normalise_signature(raw: str) -> str:
     return s
 
 
+# How many of the most recent check-ins the live feed returns.
+# Polled every 5s on the session detail page; 20 entries × 5s = the
+# last ~100s of door activity, which is enough for a security officer
+# to confirm the room is filling on time.
+LIVE_FEED_LIMIT = 20
+
+
+def build_live_feed(session: ExamSession) -> dict:
+    """Return the last :data:`LIVE_FEED_LIMIT` check-ins for ``session``.
+
+    Used by the security officer dashboard's "live" panel. The shape
+    is flat enough to render directly in the UI without a second
+    round-trip: each entry has the user, the kind, the timestamp, and
+    the late flag.
+    """
+    rows = (
+        CheckIn.objects
+        .filter(session=session)
+        .select_related("user", "recorded_by")
+        .order_by("-at", "-created_at")[:LIVE_FEED_LIMIT]
+    )
+    entries = [
+        {
+            "id": str(r.id),
+            "user_id": str(r.user_id),
+            "user_email": r.user.email,
+            "user_name": r.user.full_name,
+            "kind": r.kind,
+            "method": r.method,
+            "at": r.at.isoformat(),
+            "late": r.late,
+            "location": r.location,
+            "recorded_by_email": r.recorded_by.email if r.recorded_by_id else None,
+        }
+        for r in rows
+    ]
+    return {
+        "session_id": str(session.id),
+        "entries": entries,
+    }
+
+
 __all__ = [
     "LATE_GRACE_MINUTES",
     "RosterEntry",
+    "build_live_feed",
     "build_roster",
     "compute_late",
     "csv_safe",

@@ -49,3 +49,14 @@ uritemplate==4.1.1
 
 # --- Misc --------------------------------------------------------------------
 python-dateutil==2.9.0.post0
+
+# --- AI assistant (Phase 19) ------------------------------------------------
+# OpenRouter is OpenAI-shaped; the client is a thin async wrapper around
+# httpx. Pinned to a recent 0.28.x release.
+httpx==0.28.1
+
+# --- Realtime (Phase 20) -----------------------------------------------------
+# sse-starlette is the SSE library: ``SseResponse`` writes the event-stream
+# framing, ``SsePubSub`` is an in-process pub/sub for waking consumers. The
+# 2.1.x line is the first to support Python 3.12 cleanly.
+sse-starlette==2.1.3

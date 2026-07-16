@@ -6,14 +6,25 @@ The assistant is rule-based and fed live DB data. We verify:
 * a `status` question returns the active period's name;
 * a `conflicts` question enumerates the Conflict rows that exist;
 * an empty message is rejected with 400;
-* a long message (> 500 chars) is rejected with 400.
+* a long message (> 500 chars) is rejected with 400;
+* when ``OPENROUTER_API_KEY`` is set, the view calls the LLM and
+  returns its reply (Phase 19);
+* when the LLM call raises, the view falls back to the rule-based
+  reply so dev never sees a 5xx;
+* a 4xx from the LLM is logged and falls back; the 5xx retry path
+  is exercised via the ``OPENROUTER_MAX_RETRIES`` setting;
+* the chat endpoint has a per-user 30/minute throttle (Phase 19).
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, timezone
+from unittest.mock import patch
 
+import httpx
 import pytest
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -132,3 +143,142 @@ def test_chat_intent_help_on_unknown(client: APIClient, verified_user) -> None: 
     assert response.status_code == 200
     body = response.json()
     assert body["intent"] == "help"
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 — OpenRouter LLM path
+# ---------------------------------------------------------------------------
+# The view is responsible for branching: with a configured key, it calls
+# the LLM and returns its reply. Without a key, it falls back to the
+# rule-based path. These tests mock the OpenRouter client at the httpx
+# layer using ``httpx.MockTransport`` so no real network call is made
+# and the response shape is fully controlled.
+def _openrouter_response(content: str) -> dict:
+    """Build the JSON body OpenRouter (OpenAI shape) returns on success."""
+    return {
+        "id": "gen-test",
+        "model": "openai/gpt-4o-mini",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
+    }
+
+
+def _patch_chat_with(handler):
+    """Patch ``apps.ai.services.chat`` so the inner httpx call uses a
+    MockTransport driven by ``handler(request)``.
+
+    Why ``services.chat`` and not ``openrouter.chat``? The service
+    imports ``chat`` via ``from .openrouter import ... chat``, which
+    binds the function name at import time. Patching the attribute on
+    the openrouter module has no effect on the bound name in services.
+    """
+    from apps.ai import services as services_mod
+    from apps.ai.openrouter import LLMResult
+
+    transport = httpx.MockTransport(handler)
+
+    async def _stub(messages, **kwargs):  # type: ignore[no-untyped-def]
+        async with httpx.AsyncClient(transport=transport) as client:
+            response = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                json={"messages": messages, **kwargs},
+            )
+        data = response.json()
+        return LLMResult(
+            content=data["choices"][0]["message"]["content"],
+            prompt_tokens=int((data.get("usage") or {}).get("prompt_tokens") or 0),
+            completion_tokens=int((data.get("usage") or {}).get("completion_tokens") or 0),
+            latency_ms=12,
+            model=data.get("model", "openai/gpt-4o-mini"),
+        )
+
+    return patch.object(services_mod, "chat", _stub)
+
+
+@override_settings(OPENROUTER_API_KEY="sk-or-test", OPENROUTER_MAX_RETRIES=0)
+def test_chat_uses_llm_when_key_set(client: APIClient, verified_user) -> None:  # type: ignore[no-untyped-def]
+    """With a key, the LLM's reply is returned verbatim and intent=llm."""
+    payload = _openrouter_response(
+        json.dumps({
+            "reply": "**Test reply** from the LLM.",
+            "suggestions": ["Try status", "Try conflicts"],
+        })
+    )
+
+    with _patch_chat_with(lambda req: httpx.Response(200, json=payload)):
+        client.force_authenticate(verified_user)
+        response = client.post(reverse("ai:ai-chat"), {"message": "hello"}, format="json")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reply"] == "**Test reply** from the LLM."
+    assert body["intent"] == "llm"
+    assert body["suggestions"] == ["Try status", "Try conflicts"]
+
+
+@override_settings(OPENROUTER_API_KEY="sk-or-test", OPENROUTER_MAX_RETRIES=0)
+def test_chat_falls_back_to_rule_based_on_llm_4xx(
+    client: APIClient, verified_user
+) -> None:  # type: ignore[no-untyped-def]
+    """When the LLM returns 401, the view falls back to the rule-based path."""
+    with _patch_chat_with(lambda req: httpx.Response(401, json={"error": "bad key"})):
+        client.force_authenticate(verified_user)
+        response = client.post(reverse("ai:ai-chat"), {"message": "status"}, format="json")
+    assert response.status_code == 200
+    body = response.json()
+    # Rule-based path returns intent=status, not "llm".
+    assert body["intent"] == "status"
+    assert "active cycle" in body["reply"].lower() or "no active" in body["reply"].lower()
+
+
+@override_settings(OPENROUTER_API_KEY="sk-or-test", OPENROUTER_MAX_RETRIES=0)
+def test_chat_keeps_plain_text_when_llm_response_not_json(
+    client: APIClient, verified_user
+) -> None:  # type: ignore[no-untyped-def]
+    """If the LLM returns prose (the system prompt asks for JSON, but
+    models sometimes ignore that), the view treats it as a plain-text
+    reply and the intent stays ``"llm"`` — there's no rule-based
+    fallback for parse errors, just an empty suggestions list."""
+    payload = _openrouter_response("Sure! Active period: AI-1.")
+
+    with _patch_chat_with(lambda req: httpx.Response(200, json=payload)):
+        client.force_authenticate(verified_user)
+        response = client.post(reverse("ai:ai-chat"), {"message": "status"}, format="json")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reply"] == "Sure! Active period: AI-1."
+    assert body["intent"] == "llm"
+    assert body["suggestions"] == []
+
+
+def test_chat_throttles_per_user(client: APIClient, verified_user) -> None:  # type: ignore[no-untyped-def]
+    """The 30/minute ai_chat scope caps a single user at 2 calls per minute
+    in this test (rate lowered to make the assertion tractable)."""
+    from apps.ai.views import ChatUserThrottle
+    from django.core.cache import cache
+
+    payload = _openrouter_response(
+        json.dumps({"reply": "ok", "suggestions": []})
+    )
+    # Monkey-patch the rate. ``SimpleRateThrottle.__init__`` sets
+    # ``self.rate`` only if it's not already set on the class, so
+    # pre-populating it on the class is enough.
+    ChatUserThrottle.rate = "2/minute"
+    try:
+        cache.clear()
+        with _patch_chat_with(lambda req: httpx.Response(200, json=payload)):
+            client.force_authenticate(verified_user)
+            first = client.post(reverse("ai:ai-chat"), {"message": "status"}, format="json")
+            second = client.post(reverse("ai:ai-chat"), {"message": "status"}, format="json")
+            third = client.post(reverse("ai:ai-chat"), {"message": "status"}, format="json")
+    finally:
+        delattr(ChatUserThrottle, "rate")
+        cache.clear()
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 429

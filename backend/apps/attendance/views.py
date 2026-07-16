@@ -4,10 +4,13 @@ The endpoint surface is small and intentionally write-light:
 
   * ``POST /attendance/checkin/``  — invigilator or student says "I'm here".
   * ``POST /attendance/scan/``      — security officer scans a
-    student's QR (or types their code) to check them in (Phase 15).
+    student's QR (or types their code) to check them in (Phase 15,
+    hardened in Phase 19 with signed/rotating tokens).
   * ``POST /attendance/sessions/{id}/bulk-checkin/`` — security officer
     runs the door roster and marks multiple people in one call.
   * ``GET  /attendance/sessions/{id}/roster/`` — JSON roster.
+  * ``GET  /attendance/sessions/{id}/live/``  — last 20 check-ins
+    (Phase 19, polled every 5s by the security officer's session page).
   * ``GET  /attendance/sessions/{id}/export.csv`` — CSV export for the
     record (function-based view, see ``apps.attendance.exports``).
 
@@ -29,6 +32,14 @@ from rest_framework.response import Response
 from apps.allocations.models import Allocation
 from apps.core.permissions import HasPermission
 from apps.exams.models import ExamSession
+from apps.exams.qr_tokens import (
+    QrTokenError,
+    QrTokenInvalid,
+    QrTokenRevoked,
+    QrTokenUnknown,
+    resolve_for_scan,
+    verify_qr_token,
+)
 from apps.exams.student_registration import StudentRegistration
 
 from .models import CheckIn
@@ -38,7 +49,7 @@ from .serializers import (
     ScanSerializer,
     SelfCheckInSerializer,
 )
-from .services import build_roster, compute_late, normalise_signature
+from .services import build_live_feed, build_roster, compute_late, normalise_signature
 
 
 @extend_schema(tags=["attendance"])
@@ -235,7 +246,7 @@ class CheckInViewSet(viewsets.GenericViewSet):
     # ------------------------------------------------------------------
     @extend_schema(
         tags=["attendance"],
-        summary="Security officer: scan a student's QR (or type their code) to check them in.",
+        summary="Security officer: scan a student or staff QR to check them in.",
         request=ScanSerializer,
         responses={
             201: CheckInSerializer,
@@ -243,6 +254,7 @@ class CheckInViewSet(viewsets.GenericViewSet):
                 response=CheckInSerializer,
                 description="Already checked in — the existing row is returned.",
             ),
+            400: OpenApiResponse(description="Token is invalid, expired, or revoked."),
             404: OpenApiResponse(description="Registration not found for this session."),
         },
     )
@@ -253,28 +265,145 @@ class CheckInViewSet(viewsets.GenericViewSet):
         permission_classes=[HasPermission.with_codes("attendance.checkin_any")],
     )
     def scan(self, request):  # type: ignore[no-untyped-def]
-        """Resolve a (session_id, registration_id) pair and check the
-        registered student in. Idempotent on (session, user, kind)."""
+        """Resolve a scan to a (session, user, kind) and check them in.
+
+        Two paths are supported:
+
+        * **Token** (``{"token": "..."}``) — the QR scanner read a
+          signed token from the printed card. The token's HMAC,
+          TTL, and DB revocation are all checked before we trust
+          it. A student token resolves to a registration; a staff
+          token resolves to the staff member's user account.
+        * **Registration id** (``{"registration_id": "..."}``) —
+          legacy payload; the typed student_code path falls through
+          here. Kept so the historical flow still works while the
+          printed PNGs roll over to signed tokens.
+
+        Idempotent on (session, user, kind) — a second scan is a
+        no-op 200 with the existing row.
+        """
         body = ScanSerializer(data=request.data)
         body.is_valid(raise_exception=True)
+        session_id = body.validated_data["session_id"]
+        signature = normalise_signature(body.validated_data.get("signature_png", ""))
+        now = timezone.now()
+        location = body.validated_data.get("location", "")
+
+        token_str = body.validated_data.get("token") or ""
+        if token_str:
+            try:
+                row = verify_qr_token(token_str)
+            except QrTokenUnknown:
+                return Response(
+                    {"detail": "QR token not recognised"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            except QrTokenRevoked:
+                return Response(
+                    {"detail": "QR token has been revoked"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            except QrTokenInvalid as exc:
+                return Response(
+                    {"detail": f"QR token invalid: {exc}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            resolved = resolve_for_scan(row)
+            if hasattr(resolved, "registration"):
+                # Student token: registration must belong to the
+                # session the scanner is operating on.
+                if str(resolved.registration.session_id) != str(session_id):
+                    return Response(
+                        {"detail": "QR token does not match this session"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                return self._upsert(
+                    session=resolved.registration.session,
+                    user=resolved.registration.student,
+                    kind=CheckIn.Kind.STUDENT,
+                    method=CheckIn.Method.BULK,
+                    late=compute_late(resolved.registration.session, now),
+                    location=location,
+                    recorded_by=request.user,
+                    signature=signature,
+                    now=now,
+                )
+            # Staff token: the staff member is the user. Kind
+            # depends on whether they're an allocated invigilator
+            # on the session (INVIGILATOR) or a non-allocated EO /
+            # security officer (we still record them as a check-in
+            # so the session has a complete "who was in the room"
+            # history, but we mark kind=INVIGILATOR + a non-empty
+            # ``location`` so the roster can tell them apart).
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            try:
+                staff_user = User.objects.get(id=resolved.user_id)
+            except User.DoesNotExist:
+                return Response(
+                    {"detail": "staff user no longer exists"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                staff_session = ExamSession.objects.get(id=session_id)
+            except ExamSession.DoesNotExist:
+                return Response(
+                    {"detail": "session not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            is_allocated = Allocation.objects.filter(
+                session=staff_session,
+                invigilator__user=staff_user,
+                status="confirmed",
+            ).exists()
+            return self._upsert(
+                session=staff_session,
+                user=staff_user,
+                kind=CheckIn.Kind.INVIGILATOR,
+                method=CheckIn.Method.SELF,
+                late=compute_late(staff_session, now),
+                location=location or ("staff" if not is_allocated else ""),
+                recorded_by=request.user,
+                signature="",
+                now=now,
+            )
+
+        # Legacy path: registration id.
         reg = get_object_or_404(
             StudentRegistration,
             id=body.validated_data["registration_id"],
-            session_id=body.validated_data["session_id"],
+            session_id=session_id,
         )
-        signature = normalise_signature(body.validated_data.get("signature_png", ""))
-        now = timezone.now()
         return self._upsert(
             session=reg.session,
             user=reg.student,
             kind=CheckIn.Kind.STUDENT,
             method=CheckIn.Method.BULK,
             late=compute_late(reg.session, now),
-            location=body.validated_data.get("location", ""),
+            location=location,
             recorded_by=request.user,
             signature=signature,
             now=now,
         )
+
+    # ------------------------------------------------------------------
+    # Live feed (security officer dashboard)
+    # ------------------------------------------------------------------
+    @extend_schema(
+        tags=["attendance"],
+        summary="Last 20 check-ins for a session (polled by the dashboard).",
+        responses={200: OpenApiResponse(description="`{session_id, entries: [...]}`.")},
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"sessions/(?P<session_id>[^/.]+)/live",
+        permission_classes=[HasPermission.with_codes("attendance.view")],
+    )
+    def session_live(self, request, session_id=None):  # type: ignore[no-untyped-def]
+        session = get_object_or_404(ExamSession, id=session_id)
+        return Response(build_live_feed(session))
 
 
 __all__ = ["CheckInViewSet"]

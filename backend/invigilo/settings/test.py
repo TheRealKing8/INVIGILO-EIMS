@@ -47,7 +47,10 @@ CELERY_TASK_EAGER_PROPAGATES = True
 REST_FRAMEWORK = {  # noqa: F405
     **REST_FRAMEWORK,  # type: ignore[name-defined]  # noqa: F405
     "DEFAULT_THROTTLE_CLASSES": (),
-    "DEFAULT_THROTTLE_RATES": {},
+    # Keep the ai_chat scope defined so the ChatUserThrottle doesn't
+    # blow up if a test enables it. The rate itself is irrelevant when
+    # the throttle class is removed from DEFAULT_THROTTLE_CLASSES.
+    "DEFAULT_THROTTLE_RATES": {"ai_chat": "30/minute"},
 }
 
 # Cookie + session tests run in-process without HTTPS, so we relax the
@@ -56,3 +59,9 @@ REST_FRAMEWORK = {  # noqa: F405
 # that read ``pair["refresh"]`` keep working.
 JWT_REFRESH_COOKIE_SECURE = False
 JWT_INCLUDE_REFRESH_IN_BODY = True
+
+# Force the rule-based assistant in tests. A real OPENROUTER_API_KEY
+# in the operator's .env would otherwise cause the LLM path to be the
+# default and every AI test would need to mock httpx. Tests that DO
+# want to exercise the LLM path override the key with ``@override_settings``.
+OPENROUTER_API_KEY = ""

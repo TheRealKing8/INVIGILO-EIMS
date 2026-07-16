@@ -99,21 +99,40 @@ class BulkCheckInSerializer(serializers.Serializer):
 
 class ScanSerializer(serializers.Serializer):
     """Body for ``POST /attendance/scan/`` — security officer scans a
-    student's QR (or types their student code) to check them in.
+    student's or staff member's QR.
 
-    The ``session_id`` + ``registration_id`` pair is looked up in
-    :class:`StudentRegistration`; the resolved user is the one
-    checked in. The signature is optional.
+    Two payloads are accepted:
+
+    * ``{"token": "<signed>", "session_id": <uuid>}`` — the QR
+      scanner read a signed token. The session_id is required to
+      know which session the student is sitting (and to disambiguate
+      a staff member who has no session bound to the token).
+    * ``{"session_id": <uuid>, "registration_id": <uuid>}`` — the
+      legacy un-tokenised payload, kept so the historical "type the
+      student_code" path still works while the printed PNGs roll
+      over to signed tokens.
+
+    The serializer accepts either shape and exposes whichever
+    fields were provided; the view does the actual lookup.
     """
 
     session_id = serializers.UUIDField()
-    registration_id = serializers.UUIDField()
+    registration_id = serializers.UUIDField(required=False, allow_null=True)
+    token = serializers.CharField(required=False, allow_blank=True, default="")
     location = serializers.CharField(
         max_length=120, required=False, allow_blank=True, default=""
     )
     signature_png = serializers.CharField(
         required=False, allow_blank=True, default=""
     )
+
+    def validate(self, attrs):
+        # At least one of (token) or (registration_id) must be present.
+        if not attrs.get("token") and not attrs.get("registration_id"):
+            raise serializers.ValidationError(
+                "token or registration_id is required"
+            )
+        return attrs
 
 
 __all__ = [

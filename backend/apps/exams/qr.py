@@ -21,20 +21,21 @@ from django.http import HttpResponse
 _QR_VERSION_KW = {"error_correction": qrcode.constants.ERROR_CORRECT_M, "box_size": 10, "border": 2}
 
 
-def qr_png_response(obj, *, payload_attr: str = "id") -> HttpResponse:
-    """Render a PNG QR encoding ``str(getattr(obj, payload_attr))``.
+def qr_png_response(payload: str) -> HttpResponse:
+    """Render a PNG QR encoding ``payload``.
 
-    The default ``payload_attr="id"`` works for any
-    :class:`apps.core.models.UUIDModel` (the row's UUID). For other
-    payloads, pass a different attribute.
+    ``payload`` is the raw string the door scanner reads back. For
+    Phase 19 this is a signed token from
+    :func:`apps.exams.qr_tokens.issue_student_qr_token` rather than
+    a raw row id — see that module for the wire format.
     """
-    payload = str(getattr(obj, payload_attr))
     img = qrcode.make(payload, **_QR_VERSION_KW)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     response = HttpResponse(buf.getvalue(), content_type="image/png")
-    response["Content-Disposition"] = f'inline; filename="qr-{payload}.png"'
-    # Don't let an intermediary cache a personal QR.
+    response["Content-Disposition"] = f'inline; filename="qr.png"'
+    # Don't let an intermediary cache a personal QR. The token
+    # expires on a 60s rotation; cached PNGs would be stale.
     response["Cache-Control"] = "private, no-store"
     return response
 

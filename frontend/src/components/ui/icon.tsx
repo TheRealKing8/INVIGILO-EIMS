@@ -52,7 +52,8 @@ export type IconName =
   | "monitor"
   | "camera"
   | "trash"
-  | "chart";
+  | "chart"
+  | "cloud-off";
 
 type IconProps = SVGProps<SVGSVGElement> & { name: IconName };
 
@@ -280,6 +281,14 @@ const paths: Record<IconName, ReactElement> = {
     <>
       <path d="M3 3v18h18" />
       <path d="M7 16v-4M12 16V8M17 16v-6" />
+    </>
+  ),
+  // Cloud with a diagonal slash — used by the door scanner's
+  // offline / queued state.
+  "cloud-off": (
+    <>
+      <path d="M22.61 16.95A5 5 0 0 0 18 10h-1.26a8 8 0 0 0-7.05-6M5 5a8 8 0 0 0 4 15h9a5 5 0 0 0 1.7-.31" />
+      <path d="M1 1l22 22" />
     </>
   ),
 };

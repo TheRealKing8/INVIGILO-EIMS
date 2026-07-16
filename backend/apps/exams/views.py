@@ -12,6 +12,7 @@ from apps.invigilators.models import InvigilatorProfile
 
 from .models import ExamPeriod, ExamSession
 from .qr import qr_png_response
+from .qr_tokens import issue_student_qr_token
 from .serializers import (
     ExamPeriodSerializer,
     ExamSessionSerializer,
@@ -332,11 +333,25 @@ class StudentRegistrationViewSet(viewsets.ModelViewSet):
     @extend_schema(
         tags=["exams"],
         summary="Printable QR code (PNG) for the registration row.",
+        description=(
+            "Returns a PNG QR that encodes a *signed* token bound to this "
+            "registration. The token is short-lived (default 60s); clients "
+            "should re-fetch the PNG on every page load so the printed card "
+            "shows the current rotation. The server's signing key is never "
+            "exposed — only the resulting PNG."
+        ),
         responses={200: OpenApiResponse(description="PNG image.")},
     )
     @action(detail=True, methods=["get"], url_path="qr.png")
     def qr_png(self, request, pk=None):  # type: ignore[no-untyped-def]
-        return qr_png_response(self.get_object())
+        reg = self.get_object()
+        # Issue a fresh signed token on every request. The DB is the
+        # audit trail; the HMAC is the auth. Each token is bound to
+        # the registration it was issued for — a screenshot of an
+        # old PNG goes stale within the TTL and the DB check stops
+        # longer-lived reuse after a revocation.
+        raw, _ = issue_student_qr_token(reg)
+        return qr_png_response(raw)
 
     @extend_schema(
         tags=["exams"],

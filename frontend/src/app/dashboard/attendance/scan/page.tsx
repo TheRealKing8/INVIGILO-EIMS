@@ -5,7 +5,20 @@
  * that pops a toast on hit. The decode is silent — the user doesn't
  * have to click anything; they just point the camera at the student's
  * QR card and the page calls the backend's
- * ``/api/v1/attendance/scan/`` with the registration id.
+ * ``/api/v1/attendance/scan/`` with the signed token.
+ *
+ * Phase 19 — the QR payload is a *signed* token, not a raw
+ * registration id. The token carries an HMAC + a 60s TTL; the
+ * server verifies both and looks up the registration. Tokens
+ * minted in the same second for the same subject are still
+ * distinct (a per-issue random nonce) so we can rotate the
+ * PNG on every page load without collision.
+ *
+ * Phase 19 — offline queue. If the call fails because the
+ * connection is down, the scan is enqueued in localStorage and
+ * retried on the next ``online`` event. The cap is 50 entries
+ * (~5KB); the queue is FIFO and drops items that 4xx (broken
+ * token, wrong session) so retries don't loop on noise.
  *
  * The signature pad below the camera is optional. The secops draws
  * with the mouse / finger; "Clear" resets; "Use signature" commits the
@@ -34,11 +47,19 @@ import { StatusBanner } from "@/components/ui/status-banner";
 import {
   getAttendanceRoster,
   getStudentRegistrations,
+  scanQrToken,
   scanStudent,
   type Roster,
   type StudentRegistration,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import {
+  drainQueue,
+  enqueueScan,
+  installOfflineDrain,
+  readQueue,
+  type QueuedScan,
+} from "@/lib/scan-queue";
 import { useFetch } from "@/lib/use-fetch";
 
 // Signature pad constants.
@@ -78,6 +99,8 @@ export default function ScanPage() {
     at: string;
   } | null>(null);
   const [hasSignature, setHasSignature] = useState(false);
+  const [queueSize, setQueueSize] = useState(0);
+  const [isOnline, setIsOnline] = useState(true);
 
   // Reload the roster after every successful scan so the toast + the
   // back-to-roster link both reflect the new state.
@@ -191,7 +214,11 @@ export default function ScanPage() {
           last && last.value === code.data && now - last.at < 1500;
         lastDecodeRef.current = { value: code.data, at: now };
         if (!isRepeat) {
-          void submitScan(code.data);
+          // Phase 19: the QR payload is a signed token (``<subject>:<exp>:<nonce>:<sig>``),
+          // not a registration id. Send it through the token path so the
+          // server can verify the HMAC + TTL + revocation before recording
+          // the check-in.
+          void submitTokenScan(code.data);
         }
       }
       rafRef.current = requestAnimationFrame(tick);
@@ -210,6 +237,35 @@ export default function ScanPage() {
   useEffect(() => {
     return () => stopCamera();
   }, [stopCamera]);
+
+  // --- Offline queue + network status (Phase 19) -----------------------
+  // Install the global drainer and watch the queue size + navigator.onLine
+  // so the UI can flag a "queued for upload" state. We keep the listeners
+  // attached for the lifetime of the page; the install helper is idempotent
+  // so a remount doesn't double-attach.
+  useEffect(() => {
+    setQueueSize(readQueue().length);
+    const updateOnline = () => setIsOnline(navigator.onLine);
+    updateOnline();
+    window.addEventListener("online", updateOnline);
+    window.addEventListener("offline", updateOnline);
+    // On every successful scan we want the queue indicator to refresh
+    // without a full reload — listen for storage events from other tabs
+    // too, so a secops in tab A and another in tab B see the same state.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "invigilo_scan_queue") {
+        setQueueSize(readQueue().length);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    const teardown = installOfflineDrain();
+    return () => {
+      window.removeEventListener("online", updateOnline);
+      window.removeEventListener("offline", updateOnline);
+      window.removeEventListener("storage", onStorage);
+      teardown();
+    };
+  }, []);
 
   // --- Signature pad ---------------------------------------------------
   const initSignature = useCallback(() => {
@@ -286,6 +342,9 @@ export default function ScanPage() {
   }
 
   // --- Submission ------------------------------------------------------
+  // Phase 19: a camera read is a *signed token*; the manual-code path
+  // resolves to a registration id and still uses the legacy
+  // ``scanStudent`` call. The two paths merge at the toast level.
   async function submitScan(registrationId: string) {
     if (!sessionId) return;
     setActionError(null);
@@ -295,21 +354,67 @@ export default function ScanPage() {
       const out = await scanStudent(sessionId, registrationId, {
         signature_png: sig,
       });
-      // We don't have the student name from the scan response, but
-      // the back-end returns user_email which we can use to look up
-      // the registration row.
       const reg = regs?.find((r) => r.id === registrationId);
       setLastScan({
         student_name: reg?.student_name ?? null,
         student_code: reg?.student_code ?? "—",
         at: out.at,
       });
-      // Reset the signature pad after a successful scan so the
-      // next student signs a fresh one.
       if (hasSignature) clearSignature();
       await refreshRoster();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Scan failed");
+    } finally {
+      setActionPending(false);
+    }
+  }
+
+  /**
+   * Camera-driven scan: the jsQR read is a *signed token* (the
+   * raw bytes from the PNG), not a registration id. We try the
+   * online path first; on a network-level failure (no
+   * ``status``, i.e. fetch couldn't reach the server) we
+   * enqueue the scan and keep going. The drain loop replays
+   * queued scans when connectivity returns.
+   */
+  async function submitTokenScan(token: string) {
+    if (!sessionId) return;
+    setActionError(null);
+    setActionPending(true);
+    const sig = hasSignature ? captureSignature() : "";
+    const captured: QueuedScan = {
+      session_id: sessionId,
+      token,
+      signature_png: sig,
+      location: "",
+      captured_at: new Date().toISOString(),
+    };
+    try {
+      const out = await scanQrToken(sessionId, token, {
+        signature_png: sig,
+      });
+      setLastScan({
+        student_name: out.user_name ?? out.user_email ?? null,
+        student_code: out.user_email ?? "—",
+        at: out.at,
+      });
+      if (hasSignature) clearSignature();
+      await refreshRoster();
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      // 4xx/5xx from the server is a real error — surface it. Only
+      // a true network failure (no status) is "WiFi down, queue it".
+      if (typeof status === "number") {
+        setActionError(err instanceof Error ? err.message : "Scan failed");
+      } else {
+        enqueueScan(captured);
+        setQueueSize(readQueue().length);
+        setLastScan({
+          student_name: null,
+          student_code: "queued for upload",
+          at: captured.captured_at,
+        });
+      }
     } finally {
       setActionPending(false);
     }
@@ -322,6 +427,11 @@ export default function ScanPage() {
     }
     await submitScan(manualReg.id);
     setManualCode("");
+  }
+
+  async function flushQueue() {
+    const result = await drainQueue();
+    setQueueSize(result.remaining);
   }
 
   if (!sessionId) {
@@ -368,6 +478,22 @@ export default function ScanPage() {
       }
       actions={
         <div className="flex items-center gap-2">
+          {queueSize > 0 ? (
+            <button
+              type="button"
+              onClick={() => void flushQueue()}
+              title="Pending scans are stored locally; click to retry now"
+              className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200 hover:bg-amber-200"
+            >
+              <Icon name="cloud-off" className="h-3.5 w-3.5" />
+              {queueSize} queued
+            </button>
+          ) : !isOnline ? (
+            <span className="inline-flex items-center gap-2 rounded-full bg-rose-100 px-3 py-1 text-[11px] font-semibold text-rose-900 ring-1 ring-rose-200">
+              <Icon name="cloud-off" className="h-3.5 w-3.5" />
+              Offline
+            </span>
+          ) : null}
           <Button
             variant="primary"
             size="md"

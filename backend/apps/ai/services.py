@@ -34,6 +34,16 @@ Why rule-based, not an LLM?
   Conflict table.
 * Cheap. No tokens, no third-party dependency, no PHI/PII leak via
   an external API. Everything stays on the Invigilo box.
+
+# ---------------------------------------------------------------------------
+# Phase 19 — LLM fallback path
+# ---------------------------------------------------------------------------
+# When ``settings.OPENROUTER_API_KEY`` is set, the view layer routes
+# the question to :func:`compose_reply_llm` instead, which uses the
+# same :func:`build_context` snapshot as the source of truth and
+# hands the natural-language rendering to OpenRouter. The rule-based
+# path remains as the fallback (and the default in dev when no key
+# is configured).
 """
 from __future__ import annotations
 
@@ -297,4 +307,196 @@ def compose_reply(message: str, ctx: ContextSnapshot) -> tuple[str, list[str], s
     return reply, suggestions, intent
 
 
-__all__ = ["build_context", "compose_reply", "detect_intent", "ContextSnapshot"]
+# ---------------------------------------------------------------------------
+# Phase 19 — LLM path
+# ---------------------------------------------------------------------------
+import json
+import logging
+import re
+from typing import Iterable
+
+from django.conf import settings
+
+from .openrouter import OpenRouterError, chat
+from .prompts import SYSTEM_PROMPT, build_user_prompt
+
+
+logger = logging.getLogger("invigilo.ai")
+
+
+def build_messages(role: str, message: str, ctx: ContextSnapshot) -> list[dict]:
+    """Build the OpenAI-shaped message list for an LLM call.
+
+    Shared by the non-streaming :func:`compose_reply_llm` (HTTP
+    view) and the streaming path in
+    :mod:`apps.realtime.views` (SSE view). One source of truth for
+    the wire shape — both callers produce the same
+    ``[system, user]`` list, so an LLM-side change to the system
+    prompt is picked up everywhere in one place.
+
+    The user-role message is the :func:`build_user_prompt` output
+    (role label + question + fenced-JSON context), which is itself
+    a defence against prompt injection: the LLM treats the JSON
+    block as data, not as instructions.
+    """
+    context_dict = _context_to_dict(ctx)
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": build_user_prompt(role, message, context_dict)},
+    ]
+
+
+def _user_role_code(user) -> str:
+    """Best-effort role code for the system prompt.
+
+    Falls back to ``"USER"`` when the user has no primary role
+    (e.g. a brand-new registration that hasn't been assigned yet,
+    or a service account). The LLM treats unknown roles as
+    read-only by default — see ``SYSTEM_PROMPT``.
+    """
+    try:
+        primary = user.primary_role_code
+    except AttributeError:
+        primary = None
+    if primary:
+        return primary
+    # Superusers get a clearer label even without an explicit role.
+    if getattr(user, "is_superuser", False):
+        return "SYSTEM_ADMINISTRATOR"
+    return "GUEST"
+
+
+def _context_to_dict(ctx: ContextSnapshot) -> dict:
+    """Plain dict the LLM sees. Mirrors the smaller ``_context_to_dict``
+    in views.py but includes a few more fields (run stats) that are
+    useful for the LLM but would bloat the chat-panel disclosure.
+    """
+    return {
+        "active_period": ctx.period.code if ctx.period else None,
+        "active_period_name": ctx.period.name if ctx.period else None,
+        "active_period_window": (
+            f"{ctx.period.starts_on} → {ctx.period.ends_on}" if ctx.period else None
+        ),
+        "upcoming_sessions": [
+            {
+                "course": s.course.code if s.course_id else None,
+                "room": s.room.code if s.room_id else None,
+                "starts_at": s.starts_at.isoformat() if s.starts_at else None,
+                "registered": s.registered,
+                "capacity": s.capacity,
+            }
+            for s in ctx.upcoming_sessions[:5]
+        ],
+        "open_conflicts": [
+            {
+                "type": c.type,
+                "severity": c.severity,
+                "detail": c.detail,
+            }
+            for c in ctx.open_conflicts[:5]
+        ],
+        "open_incidents": [
+            {
+                "severity": i.severity,
+                "title": i.title,
+            }
+            for i in ctx.open_incidents[:5]
+        ],
+        "invigilator_total": ctx.invigilator_total,
+        "invigilator_unavailable_today": ctx.invigilator_unavailable_today,
+        "latest_run": (
+            {
+                "period": ctx.latest_run.period.code if ctx.latest_run.period_id else None,
+                "coverage_pct": (
+                    round(ctx.latest_run.capacity_utilisation * 100, 1)
+                    if ctx.latest_run and ctx.latest_run.capacity_utilisation is not None
+                    else None
+                ),
+                "sessions_placed": ctx.latest_run.sessions_placed if ctx.latest_run else None,
+                "sessions_total": ctx.latest_run.sessions_total if ctx.latest_run else None,
+            }
+            if ctx.latest_run
+            else None
+        ),
+    }
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+_LOOSE_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _parse_llm_json(content: str) -> tuple[str, list[str]]:
+    """Extract ``{"reply": "...", "suggestions": [...]}`` from the LLM output.
+
+    The system prompt asks for raw JSON. Defensive parsing handles the
+    three realistic failure modes:
+
+    1. Perfect: parse the first JSON object.
+    2. Wrapped: the model wrapped the JSON in ```json fences — strip them.
+    3. Sloppy: there's a stray sentence before/after — fall back to the
+       first ``{...}`` block. If the result still doesn't parse, treat
+       the entire content as the reply with empty suggestions.
+    """
+    content = (content or "").strip()
+    # 1) wrapped in code fences
+    m = _JSON_FENCE_RE.search(content)
+    if m:
+        candidate = m.group(1)
+    else:
+        # 2) bare JSON object somewhere in the content
+        m = _LOOSE_JSON_RE.search(content)
+        candidate = m.group(0) if m else content
+    try:
+        data = json.loads(candidate)
+    except ValueError:
+        logger.warning("llm reply was not JSON; using as plain text")
+        return content, []
+    reply = (data.get("reply") or "").strip()
+    raw_suggestions = data.get("suggestions") or []
+    if not isinstance(raw_suggestions, list):
+        raw_suggestions = []
+    suggestions = [str(s).strip() for s in raw_suggestions if str(s).strip()][:4]
+    return reply, suggestions
+
+
+async def compose_reply_llm(
+    user,
+    message: str,
+    ctx: ContextSnapshot,
+    role: str | None = None,
+) -> tuple[str, list[str], str, dict]:
+    """Call OpenRouter with the live context and return a reply.
+
+    Returns ``(reply, suggestions, intent, llm_meta)`` where
+    ``llm_meta`` is a dict the view can log (model, latency, token
+    counts). ``intent`` is always ``"llm"`` for the LLM path —
+    there's no intent classifier in front of the LLM, the LLM
+    itself decides what to do.
+
+    ``role`` is computed by the caller (the view). It MUST be passed
+    in: doing the role lookup inside the async function trips
+    Django's sync-only-ORM check.
+    """
+    if not role:
+        role = _user_role_code(user)
+    messages = build_messages(role=role, message=message, ctx=ctx)
+
+    result = await chat(messages=messages)
+    reply, suggestions = _parse_llm_json(result.content)
+    llm_meta = {
+        "model": result.model,
+        "latency_ms": result.latency_ms,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+    }
+    return reply, suggestions, "llm", llm_meta
+
+
+__all__ = [
+    "build_context",
+    "build_messages",
+    "compose_reply",
+    "compose_reply_llm",
+    "detect_intent",
+    "ContextSnapshot",
+]

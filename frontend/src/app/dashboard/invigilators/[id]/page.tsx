@@ -12,7 +12,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,12 +35,15 @@ import {
   getAvailability,
   getInvigilators,
   setAvailability,
+  staffQrUrl,
+  staffQrUrlFor,
   type Allocation,
   type Availability,
   type InvigilatorProfile,
   type Paginated,
 } from "@/lib/api";
 import { useFetch } from "@/lib/use-fetch";
+import { useAuth } from "@/lib/auth";
 
 type DayStatus = "available" | "busy" | "off_duty" | "leave";
 
@@ -104,6 +107,7 @@ export default function InvigilatorProfilePage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const id = params?.id;
+  const { user: me } = useAuth();
 
   // The current status per date, indexed by YYYY-MM-DD. Built from
   // the server response on every refresh; we keep it as a Map so
@@ -167,6 +171,12 @@ export default function InvigilatorProfilePage() {
   const profile = data?.profile ?? null;
   const allocations = data?.allocations?.results ?? [];
   const workload = allocations.length;
+  // SA/EO/HR (people.invigilator.crud) can fetch *any* invigilator's
+  // staff QR for verification. The server re-checks the perm on the
+  // QR endpoint, so this is a client-side gate only.
+  const canManageInvigilators = Boolean(
+    me?.permissions?.includes("people.invigilator.crud"),
+  );
   const cap = profile?.max_sessions_per_cycle ?? 0;
 
   // Build the 14-day window once per render. The window is anchored
@@ -414,6 +424,16 @@ export default function InvigilatorProfilePage() {
             </div>
           </Card>
 
+          {/* Phase 19 + 20: staff QR panel.
+              * Self: anyone signed in (no extra perm).
+              * Operator: SA/EO/HR (people.invigilator.crud) can fetch
+                another invigilator's QR. The token is still minted
+                for the *target* user, so a screenshot of their
+                QR still checks THEM in. */}
+          {profile && id && (profile.user === me?.id || canManageInvigilators) ? (
+            <StaffQrPanel profileId={id} isSelf={profile.user === me?.id} />
+          ) : null}
+
           <CardDark>
             <p className="eyebrow text-brand-300">Allocation engine</p>
             <h3 className="mt-2 text-xl font-semibold tracking-tight text-white">
@@ -434,6 +454,67 @@ export default function InvigilatorProfilePage() {
         </div>
       </div>
     </DashboardShell>
+  );
+}
+
+/**
+ * "Staff QR" — Phase 19 + Phase 20. The panel renders in two cases:
+ *
+ *  1. **Self**: the viewed profile is the *currently signed-in*
+ *     user. Anyone can fetch their own staff QR; this is the
+ *     primary use-case.
+ *  2. **Operator view**: the viewer has ``people.invigilator.crud``
+ *     (admin / EO / HR). They can fetch *another* invigilator's
+ *     QR for verification — the token is still minted for the
+ *     *target* user, not the viewer, so scanning the QR still
+ *     checks in the right person.
+ *
+ * In both cases the PNG is fetched from a signed endpoint and
+ * the ``?t=`` cache-buster rotates every 60s, so a screenshot
+ * of this page is stale within a minute. The signed TTL on the
+ * server is 5min, so the 60s rotation gives comfortable headroom.
+ */
+function StaffQrPanel({
+  profileId,
+  isSelf,
+}: {
+  profileId: string;
+  isSelf: boolean;
+}) {
+  // Cache-buster every minute → 5min TTL + 1min rotation.
+  const [stamp, setStamp] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setStamp(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const base = isSelf ? staffQrUrl() : staffQrUrlFor(profileId);
+  const src = `${base}?t=${stamp}`;
+  return (
+    <Card>
+      <CardHeader
+        eyebrow={isSelf ? "My staff QR" : "Staff QR"}
+        title={isSelf ? "Show this at the door" : "Their staff QR"}
+        subtitle={
+          isSelf
+            ? "Rotates every 60 seconds. Tied to your account — don't share it."
+            : "Tied to this invigilator's account. Scanning checks THEM in, not you."
+        }
+      />
+      <div className="mt-4 flex justify-center rounded-2xl bg-white p-4 ring-1 ring-ink-200">
+        <img
+          src={src}
+          alt="Staff QR code"
+          width={192}
+          height={192}
+          className="h-48 w-48"
+        />
+      </div>
+      <p className="mt-3 text-xs text-ink-500">
+        The security officer scans this with the door scanner; the scanner
+        checks the signature and creates a check-in. 5-minute validity,
+        60-second rotation.
+      </p>
+    </Card>
   );
 }
 

@@ -973,6 +973,73 @@ export async function scanStudent(
   });
 }
 
+/**
+ * Phase 19 — scan a *signed* QR token (the byte string encoded in
+ * the printed PNG). The token is HMAC-signed and short-lived; the
+ * backend verifies signature + TTL + DB revocation before
+ * resolving it to a registration (student) or user (staff).
+ */
+export async function scanQrToken(
+  sessionId: string,
+  token: string,
+  opts?: { signature_png?: string; location?: string },
+): Promise<CheckIn> {
+  return requestWithAuth<CheckIn>("/api/v1/attendance/scan/", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: sessionId,
+      token,
+      signature_png: opts?.signature_png ?? "",
+      location: opts?.location ?? "",
+    }),
+  });
+}
+
+/**
+ * Phase 19 — the live check-in feed for a session. Polled by the
+ * security officer dashboard every 5s. Returns the most recent 20
+ * check-ins (id, user, kind, late flag, at, recorded_by).
+ */
+export type LiveFeedEntry = {
+  id: string;
+  user_id: string;
+  user_email: string;
+  user_name: string;
+  kind: CheckIn["kind"];
+  method: CheckIn["method"] | null;
+  at: string;
+  late: boolean;
+  location: string;
+  recorded_by_email: string | null;
+};
+
+export type LiveFeed = {
+  session_id: string;
+  entries: LiveFeedEntry[];
+};
+
+export const getAttendanceLive = (sessionId: string) =>
+  requestWithAuth<LiveFeed>(`/api/v1/attendance/sessions/${sessionId}/live/`);
+
+/**
+ * Phase 19 — the staff QR PNG URL. Returns a freshly-signed token
+ * bound to the caller. The token rotates every 5 minutes so a
+ * screenshot is stale within minutes.
+ */
+export function staffQrUrl(): string {
+  return `${API_BASE_URL}/api/v1/invigilators/profiles/me/qr.png/`;
+}
+
+/**
+ * Staff QR for a *specific* invigilator profile. Available only
+ * to users with ``people.invigilator.crud`` (admin/EO/HR). Used
+ * by the invigilator-detail page when an operator is verifying
+ * a colleague's QR.
+ */
+export function staffQrUrlFor(profileId: string): string {
+  return `${API_BASE_URL}/api/v1/invigilators/profiles/${profileId}/qr.png/`;
+}
+
 // ---------------------------------------------------------------------------
 // Notifications (Phase 14 — the in-app event feed + topbar bell)
 // ---------------------------------------------------------------------------

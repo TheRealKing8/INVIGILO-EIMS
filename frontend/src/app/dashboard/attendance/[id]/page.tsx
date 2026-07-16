@@ -14,7 +14,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +25,9 @@ import { StatusBanner } from "@/components/ui/status-banner";
 import {
   bulkCheckIn,
   exportAttendanceCsvUrl,
+  getAttendanceLive,
   getAttendanceRoster,
+  type LiveFeed,
   type Roster,
   type RosterEntry,
 } from "@/lib/api";
@@ -56,6 +58,113 @@ function initialsOf(name: string): string {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+}
+
+/**
+ * The "Live" panel — last 20 check-ins, polled every 5s.
+ *
+ * This is a Phase 19 addition. The endpoint is
+ * ``GET /api/v1/attendance/sessions/{id}/live/`` (20 rows
+ * most-recent-first). We poll it on a 5s interval while the
+ * page is open. SSE would be nicer but is out of scope for
+ * Phase 19.
+ *
+ * 5s is short enough that a security officer at the door
+ * sees a check-in appear within ~6s of the camera
+ * submission. Long enough that a room of 10 secops
+ * generates only 120 req/min — well within the global
+ * 1000/min user throttle.
+ */
+function LiveFeedPanel({ sessionId }: { sessionId: string }) {
+  const [feed, setFeed] = useState<LiveFeed | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const next = await getAttendanceLive(sessionId);
+        if (cancelled) return;
+        setFeed(next);
+        setLastUpdated(new Date());
+        setError(null);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Could not load live feed");
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [sessionId]);
+
+  return (
+    <Card padded={false}>
+      <div className="flex items-center justify-between border-b border-ink-100 p-5">
+        <CardHeader
+          eyebrow="Live"
+          title="Recent check-ins"
+          subtitle="Most recent 20, polled every 5 seconds."
+        />
+        <div className="flex items-center gap-2 text-[11px] text-ink-500">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+          </span>
+          {lastUpdated ? `Updated ${fmtTime(lastUpdated.toISOString())}` : "Loading…"}
+        </div>
+      </div>
+      {error ? (
+        <p className="p-6 text-sm text-rose-700">{error}</p>
+      ) : !feed ? (
+        <p className="p-6 text-sm text-ink-500">Waiting for first scan…</p>
+      ) : feed.entries.length === 0 ? (
+        <p className="p-6 text-sm text-ink-500">No check-ins yet.</p>
+      ) : (
+        <ul className="max-h-96 divide-y divide-ink-100 overflow-y-auto">
+          {feed.entries.map((e) => (
+            <li
+              key={e.id}
+              className="flex items-center gap-3 px-5 py-2.5 text-sm"
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink-100 text-[11px] font-semibold text-ink-700">
+                {initialsOf(e.user_name || e.user_email)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-ink-900">
+                  {e.user_name || e.user_email}
+                </p>
+                <p className="truncate text-xs text-ink-500">
+                  {e.user_email}
+                  {e.recorded_by_email ? ` · by ${e.recorded_by_email}` : ""}
+                </p>
+              </div>
+              <div className="shrink-0 text-right">
+                <Badge
+                  tone={
+                    e.kind === "invigilator"
+                      ? "brand"
+                      : e.late
+                        ? "warning"
+                        : "success"
+                  }
+                >
+                  {e.kind === "invigilator" ? "Staff" : e.late ? "Late" : "Present"}
+                </Badge>
+                <p className="mt-1 text-[11px] text-ink-400">
+                  {fmtTime(e.at)}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
 }
 
 function RosterTable({
@@ -252,6 +361,10 @@ export default function AttendanceSessionPage() {
                 {data.totals.student.late} late
               </p>
             </Card>
+          </div>
+
+          <div className="mb-6">
+            <LiveFeedPanel sessionId={id} />
           </div>
 
           <div className="space-y-6">
