@@ -68,6 +68,14 @@ api_v1_patterns = [
         "notifications/",
         include(("apps.notifications.urls", "notifications"), namespace="notifications"),
     ),
+    # Phase 20 — SSE streams. The ``realtime`` mount holds the
+    # notifications stream + the per-session live-check-in stream +
+    # the AI streaming endpoint. Each URL path lives at the top
+    # level of /api/v1/realtime/ so the consumer URL is obvious.
+    path(
+        "realtime/",
+        include(("apps.realtime.urls", "realtime"), namespace="realtime"),
+    ),
 ]
 
 urlpatterns = [
