@@ -253,6 +253,104 @@ def test_password_reset_round_trip_revokes_refresh_tokens(
     )
 
 
+def test_password_reset_confirm_rejects_unknown_token(client: APIClient) -> None:
+    """A bogus token is 404 — we don't tell an attacker the token
+    *format*, but the row genuinely doesn't exist, so NotFoundError
+    is the right code (matches the "explore then exploit" pattern
+    of other endpoints).
+    """
+    response = client.post(
+        reverse("auth:auth-password-reset-confirm"),
+        {"token": "bogus-token", "new_password": "Abcde1"},
+        format="json",
+    )
+    assert response.status_code == 404
+
+
+def test_password_reset_confirm_rejects_expired_token(
+    client: APIClient, verified_user: User
+) -> None:
+    """A token past its expires_at is rejected with 422.
+
+    Phase 22 — the failure path was previously untested; a bug here
+    would silently break every user whose link sat in their inbox
+    for more than 30 minutes.
+    """
+    from django.utils import timezone
+
+    token = auth_service.issue_password_reset(verified_user.email)
+    assert token is not None
+    # Backdate the row so the lookup sees an expired token.
+    PasswordReset.objects.filter(token_hash=auth_service._hash_token(token)).update(
+        expires_at=timezone.now() - timezone.timedelta(seconds=1)
+    )
+    response = client.post(
+        reverse("auth:auth-password-reset-confirm"),
+        {"token": token, "new_password": "Abcde1"},
+        format="json",
+    )
+    assert response.status_code == 422
+    assert "expired or been used" in response.json()["detail"]
+
+
+def test_password_reset_confirm_rejects_consumed_token(
+    client: APIClient, verified_user: User
+) -> None:
+    """A token can only be used once. The second use is 422.
+
+    The service deliberately collapses "expired" and "already used"
+    into the same opaque message so a successful-then-replay attack
+    can't tell the difference.
+    """
+    token = auth_service.issue_password_reset(verified_user.email)
+    assert token is not None
+
+    first = client.post(
+        reverse("auth:auth-password-reset-confirm"),
+        {"token": token, "new_password": "Abcde1"},
+        format="json",
+    )
+    assert first.status_code == 204
+
+    second = client.post(
+        reverse("auth:auth-password-reset-confirm"),
+        {"token": token, "new_password": "Differnt2"},
+        format="json",
+    )
+    assert second.status_code == 422
+    assert "expired or been used" in second.json()["detail"]
+
+
+def test_password_reset_rejects_weak_new_password(
+    client: APIClient, verified_user: User
+) -> None:
+    """A reset that arrives with a too-short or too-simple new password
+    is rejected with 422.
+
+    Phase 22 — Phase 21 dropped the minimum from 12 to 6 chars, but
+    only the *register* path was re-tested at the new floor. This
+    test pins the same rule through the reset-confirm path so a
+    future bump (or a silent regression in the validator wiring)
+    surfaces here.
+    """
+    token = auth_service.issue_password_reset(verified_user.email)
+    assert token is not None
+
+    # 5 chars, single class — fails the length and complexity rules.
+    response = client.post(
+        reverse("auth:auth-password-reset-confirm"),
+        {"token": token, "new_password": "short"},
+        format="json",
+    )
+    assert response.status_code == 422
+    # The token must NOT be consumed on a weak-password rejection —
+    # the user should be able to retry with a stronger password on
+    # the same link.
+    assert (
+        PasswordReset.objects.get(token_hash=auth_service._hash_token(token)).used_at is None
+    )
+
+
 # ---------------------------------------------------------------------------
 # Password change (authenticated)
 # ---------------------------------------------------------------------------

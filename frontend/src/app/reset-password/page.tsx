@@ -161,7 +161,7 @@ export default function ResetPasswordPage() {
   return (
     <AuthShell
       title="Choose a new password"
-      subtitle="Pick something strong — 12+ characters mixing at least three of: lowercase, uppercase, digit, symbol. All your other sessions will be signed out."
+      subtitle="Pick something strong — 6+ characters mixing at least three of: lowercase, uppercase, digit, symbol. All your other sessions will be signed out."
       altLink={{ href: "/login", label: "Back to sign in" }}
       hero={{
         eyebrow: "Step 2 of 2 — Account recovery",
@@ -186,7 +186,7 @@ export default function ResetPasswordPage() {
           }}
           required
           autoComplete="new-password"
-          hint="12+ characters, mixing at least three of: lowercase, uppercase, digit, symbol."
+          hint="6+ characters, mixing at least three of: lowercase, uppercase, digit, symbol."
           error={showPasswordError ?? undefined}
         />
 

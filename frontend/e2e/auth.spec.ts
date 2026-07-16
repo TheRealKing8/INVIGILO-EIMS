@@ -46,6 +46,13 @@ test.describe("Auth (public surface)", () => {
     await expect(page.getByLabel(/^new password$/i)).toBeVisible();
     await expect(page.getByLabel(/^confirm new password$/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /reset password/i })).toBeVisible();
+    // Phase 22 — the visible policy text must match the active
+    // PASSWORD_MIN_LENGTH. Phase 21 dropped the floor from 12 to 6;
+    // a regression to "12+ characters" would mean the copy drifted
+    // away from the backend. Match both occurrences (subtitle and
+    // password hint).
+    await expect(page.getByText(/6\+\s*characters/i).first()).toBeVisible();
+    await expect(page.getByText(/12\+\s*characters/i)).toHaveCount(0);
   });
 
   test("forgot password rejects invalid email inline", async ({ page }) => {
