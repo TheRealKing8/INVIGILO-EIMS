@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 import { AuthShell } from "@/components/auth-shell";
 import { PasswordField } from "@/components/password-field";
+import { PasswordStrengthMeter } from "@/components/password-strength-meter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBanner } from "@/components/ui/status-banner";
@@ -145,9 +146,10 @@ export default function RegisterPage() {
           }}
           required
           autoComplete="new-password"
-          hint="12+ characters, mixing at least three of: lowercase, uppercase, digit, symbol."
+          hint="6+ characters, mixing at least 3 of: lowercase, uppercase, digit, symbol."
           error={showPasswordError ?? undefined}
         />
+        <PasswordStrengthMeter value={password} />
 
         <PasswordField
           id="confirmPassword"

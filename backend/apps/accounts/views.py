@@ -27,6 +27,8 @@ from apps.core.permissions import HasPermission
 
 from . import services
 from .models import User
+# Phase 21 — needed by the role-pick step's OTP check.
+from .services.auth import _OTP_REQUIRED_ROLES
 from .serializers import (
     AdminPasswordResetSerializer,
     EmailVerificationConfirmSerializer,
@@ -38,6 +40,7 @@ from .serializers import (
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RefreshRequestSerializer,
+    SelectRoleSerializer,
     SetRolesSerializer,
     UserCreateSerializer,
     UserSerializer,
@@ -62,9 +65,20 @@ class AuthViewSet(viewsets.ViewSet):
         responses={
             200: OpenApiResponse(
                 description=(
-                    "Either a token pair (refresh set as httpOnly cookie) OR "
-                    "{requires_otp: true, otp_token: '...'} when the user is "
-                    "an admin and must complete the second step."
+                    "One of:\n\n"
+                    "* `{{access, refresh, user}}` — single-role, non-staff, "
+                    "or the user just completed the role-pick step.\n"
+                    "* `{{requires_otp: true, otp_token: '...'}}` — staff "
+                    "user with one role, or the user just completed the "
+                    "role-pick step on a staff account.\n"
+                    "* `{{requires_role_pick: true, available_roles: [...], "
+                    "login_token: '...', requires_otp: false}}` — multi-role "
+                    "non-staff. The client must call /auth/select-role/ "
+                    "with the chosen code.\n"
+                    "* `{{requires_role_pick: true, available_roles: [...], "
+                    "login_token: '...', requires_otp: true, otp_token: '...'}}` "
+                    "— multi-role staff. The client calls /auth/select-role/ "
+                    "first, then completes OTP on the chosen role."
                 )
             )
         },
@@ -72,17 +86,20 @@ class AuthViewSet(viewsets.ViewSet):
     def login(self, request: Any) -> Response:
         """Exchange email + password for an access + refresh pair.
 
-        For users that must complete the OTP second step (currently
-        any user whose ``primary_role_code`` is one of the 6 internal
-        staff roles — SA, EO, HoD, Dean, Invigilator, Security
-        Officer), this returns ``{requires_otp: true, otp_token: '...'}``
-        with no JWT pair. The client posts ``{otp_token, code}`` to
-        ``/auth/verify-otp/`` to complete the login. STUDENT and
-        GUEST skip the OTP step.
+        The response shape depends on the user's role set:
 
-        The refresh token is delivered as an ``invigilo_rt`` httpOnly
-        cookie on the response. The access token is in the JSON body
-        for the client to put in ``Authorization: Bearer …``.
+        * **Single role, no OTP required** — returns the token pair
+          directly (the user lands on the dashboard).
+        * **Single role, OTP required** — returns
+          ``{requires_otp, otp_token}``; the client posts
+          ``{otp_token, code}`` to ``/auth/verify-otp/``.
+        * **Multiple roles** — returns
+          ``{requires_role_pick, available_roles, login_token}``; the
+          client renders the role-picker, then posts
+          ``{login_token, role_code}`` to ``/auth/select-role/`` which
+          either returns a token pair (if the chosen role is non-
+          staff) or hands off to ``/auth/verify-otp/`` (if the chosen
+          role is staff).
         """
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -90,6 +107,37 @@ class AuthViewSet(viewsets.ViewSet):
             email=serializer.validated_data["email"],
             password=serializer.validated_data["password"],
         )
+
+        # Multi-role path: issue a login_token and ask the client to
+        # pick a role. We branch on whether the chosen role will need
+        # OTP *after* the pick — but at the first step we don't know
+        # which role the user will pick, so we just hand them the
+        # available_roles list and let the second step decide. The
+        # client may pre-emptively show the OTP step after the user
+        # picks a staff role; the second step (``select_role``) will
+        # return ``{requires_otp, otp_token}`` for those cases.
+        if services.auth.requires_role_pick(user):
+            login_token = services.auth.issue_login_token(user)
+            available_roles = services.auth.available_roles_for(user)
+            payload: dict[str, Any] = {
+                "requires_role_pick": True,
+                "available_roles": available_roles,
+                "login_token": login_token,
+            }
+            # If the user is a staff user, the chosen role is also
+            # likely to need OTP — but we can't know which one they
+            # pick. Issue a placeholder otp_token here so the frontend
+            # can decide whether to render the OTP step UI eagerly.
+            # If they pick STUDENT/GUEST, ``select_role`` returns the
+            # token pair and the otp_token is harmless (the client
+            # simply ignores it).
+            if services.auth.requires_login_otp(user):
+                otp_token, _ = services.auth.issue_login_otp(user)
+                payload["requires_otp"] = True
+                payload["otp_token"] = otp_token
+            return Response(payload, status=status.HTTP_200_OK)
+
+        # Single-role path: existing flow.
         if services.auth.requires_login_otp(user):
             otp_token, code = services.auth.issue_login_otp(user)
             # Fire-and-forget email send. We don't block the response
@@ -135,6 +183,98 @@ class AuthViewSet(viewsets.ViewSet):
         return response
 
     @extend_schema(
+        request=SelectRoleSerializer,
+        responses={
+            200: OpenApiResponse(
+                description=(
+                    "Either a token pair (refresh set as httpOnly cookie) OR "
+                    "{requires_otp: true, otp_token: '...'} when the chosen "
+                    "role is staff."
+                )
+            )
+        },
+    )
+    def select_role(self, request: Any) -> Response:
+        """Second step of multi-role login (Phase 21).
+
+        Accepts ``{login_token, role_code}`` from the role-pick step.
+        The ``login_token`` is consumed (single-use) and the chosen
+        role must be one the user actually holds — anything else
+        returns a 422 so a stale picker card can't be replayed against
+        a role the user has since been removed from.
+
+        On success, behaves like the second step of a single-role
+        login: if the chosen role needs OTP, returns
+        ``{requires_otp, otp_token}``; otherwise returns the full
+        token pair.
+        """
+        serializer = SelectRoleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        login_token = serializer.validated_data["login_token"]
+        role_code = serializer.validated_data["role_code"]
+
+        # Look up the user first (without consuming the token) so an
+        # invalid role code can be rejected without burning the
+        # session. The token is single-use; we only mark it consumed
+        # once we know we're going to honor the request.
+        user = services.auth.lookup_login_token(login_token)
+        if user is None:
+            return Response(
+                {"detail": "Role-pick session expired. Please sign in again."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # The chosen role must be one the user actually holds. We
+        # re-read from the DB so a role the user was removed from
+        # between the first and second step can't be replayed.
+        if not user.has_role(role_code):
+            return Response(
+                {"detail": f"You don't hold the role '{role_code}'."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        # Burn the token now that we're committed to honoring the pick.
+        services.auth.consume_login_token(login_token)
+
+        # Run the same OTP check the first step would have run *had
+        # it known the chosen role*. The role-pick path makes this
+        # easy: we just call ``requires_login_otp`` against a fake
+        # user with the chosen primary role. The simplest way to do
+        # that is to set ``user.primary_role_code`` — but that's a
+        # @property, not a field, so we use a small inline check.
+        otp_required = role_code in _OTP_REQUIRED_ROLES or user.is_superuser
+        if otp_required:
+            otp_token, code = services.auth.issue_login_otp(user)
+            from .tasks import send_login_otp_email
+
+            send_login_otp_email.delay(str(user.id), code)
+            from django.conf import settings
+
+            if settings.DEBUG:
+                try:
+                    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+                except (AttributeError, ValueError):
+                    pass
+                print(
+                    "\n"
+                    "  ┌──────────────────────────────────────────────────────────┐\n"
+                    f"  │  OTP for {user.email} on role {role_code:<24s}   │\n"
+                    f"  │  code = {code:<46s} │\n"
+                    f"  │  otp_token = {otp_token:<40s} │\n"
+                    "  └──────────────────────────────────────────────────────────┘\n",
+                    flush=True,
+                )
+            return Response(
+                {"requires_otp": True, "otp_token": otp_token, "role": role_code},
+                status=status.HTTP_200_OK,
+            )
+        response = Response(status=status.HTTP_200_OK)
+        response.data = services.auth.issue_token_pair(
+            user, request=request, response=response, role_code=role_code
+        )
+        return response
+
+    @extend_schema(
         request=LoginOTPVerifySerializer,
         responses={200: OpenApiResponse(description="Token pair (refresh set as httpOnly cookie)")},
     )
@@ -170,6 +310,12 @@ class AuthViewSet(viewsets.ViewSet):
         """Create a user account and immediately issue a token pair.
 
         The refresh token is set as an httpOnly cookie on the response.
+
+        Self-registered users are placed on the :data:`SELF_REGISTRATION_ALLOWED_ROLES`
+        allowlist (STUDENT / GUEST). Anything more privileged in the
+        request body is silently dropped. If the caller sent no roles,
+        the user gets STUDENT so the dashboard router has a role to
+        branch on.
         """
         serializer = UserCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -179,6 +325,7 @@ class AuthViewSet(viewsets.ViewSet):
             password=password,
             roles=roles,
             is_email_verified=True,
+            self_registration=True,
             **serializer.validated_data,
         )
         response = Response(status=status.HTTP_201_CREATED)
@@ -329,6 +476,11 @@ class AuthViewSet(viewsets.ViewSet):
         ``/dashboard`` home re-fetches ``/auth/me/`` on mount to
         decide which role-specific branch to render, and trusts the
         live payload rather than the (potentially stale) JWT claim.
+
+        ``active_role`` is the role the user picked at login when
+        they went through the role-pick step. It's read from the JWT
+        claim (since that's what the role-pick UI wrote) and falls
+        back to ``primary_role`` for single-role users.
         """
         if not (request.user and request.user.is_authenticated):
             return Response(status=status.HTTP_401_UNAUTHORIZED)
@@ -339,6 +491,16 @@ class AuthViewSet(viewsets.ViewSet):
         data["permissions"] = sorted(
             request.user.permissions().values_list("codename", flat=True)
         )
+        # ``active_role`` is read from the JWT claim so the
+        # post-refresh ``/auth/me/`` resolves to whatever the user
+        # picked at the picker, not their primary role.
+        auth_obj = getattr(request, "auth", None)
+        active_role = None
+        if auth_obj is not None and isinstance(getattr(auth_obj, "get", None), type(lambda: None)):
+            active_role = auth_obj.get("role") or None
+        if active_role is None:
+            active_role = request.user.primary_role_code
+        data["active_role"] = active_role
         return Response(data, status=status.HTTP_200_OK)
 
     @extend_schema(request=UserUpdateSerializer, responses={200: UserSerializer})
@@ -477,9 +639,9 @@ class UserViewSet(viewsets.ViewSet):
         """Set a new password for the given user.
 
         The service runs the full ``validate_password`` complexity check
-        (12+ chars, 3-of-4 complexity, common-password block) on top of
-        the serializer's cheap ``min_length=12`` gate. Refresh tokens
-        are revoked so the affected user must sign in again.
+        (6+ chars, 3-of-4 complexity, common-password block) on top of
+        the ``MinimumLengthValidator``'s cheapest sanity gate. Refresh
+        tokens are revoked so the affected user must sign in again.
 
         Gated by ``accounts.user.reset_password`` — SYSTEM_ADMINISTRATOR
         only. See :meth:`get_permissions`.

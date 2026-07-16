@@ -21,7 +21,11 @@ const PATTERNS = {
 
 const REQUIRED_CLASSES = 3;
 
-const MIN_LENGTH = 12;
+// Phase 21 lowered the floor from 12 to 6 characters. The 3-of-4
+// character-classes rule is the real gate — see ``isValidPassword`` and
+// the password-strength meter. Server-side mirror lives in
+// ``backend/apps/accounts/validators.py``.
+const MIN_LENGTH = 6;
 
 /** Common passwords blocked on the server. Mirrors ``validators.py:65-78``. */
 export const COMMON_PASSWORDS: ReadonlySet<string> = new Set([
@@ -82,6 +86,56 @@ export function isValidPassword(value: string): ValidationResult {
 
 export function passwordMatches(password: string, confirm: string): boolean {
   return password.length > 0 && password === confirm;
+}
+
+/**
+ * Coarse 0-4 strength score for the password-strength meter.
+ *
+ *   0 — below the minimum length (don't accept)
+ *   1 — meets the minimum length (OK to use, weak)
+ *   2 — meets the 3-of-4 character-classes rule
+ *   3 — all four character classes
+ *   4 — all four classes *and* 16+ characters
+ *
+ * The thresholds are intentionally generous — a meter is feedback,
+ * not a gate. ``isValidPassword`` is the real validator.
+ */
+export type PasswordStrength = 0 | 1 | 2 | 3 | 4;
+
+export function passwordStrengthScore(value: string): PasswordStrength {
+  if (!value || value.length < MIN_LENGTH) {
+    return 0;
+  }
+  const classesPresent = Object.values(PATTERNS).filter((re) => re.test(value)).length;
+  if (value.length >= 16 && classesPresent === 4) {
+    return 4;
+  }
+  if (classesPresent === 4) {
+    return 3;
+  }
+  if (classesPresent >= REQUIRED_CLASSES) {
+    return 2;
+  }
+  return 1;
+}
+
+/**
+ * The three complexity rules the user has to hit, with a "passed"
+ * flag for each. The meter renders these as a checklist of ✓/✗.
+ */
+export type PasswordChecklist = {
+  hasMinLength: boolean;
+  hasThreeClasses: boolean;
+  hasFourClasses: boolean;
+};
+
+export function passwordChecklist(value: string): PasswordChecklist {
+  const classesPresent = Object.values(PATTERNS).filter((re) => re.test(value)).length;
+  return {
+    hasMinLength: (value || "").length >= MIN_LENGTH,
+    hasThreeClasses: classesPresent >= REQUIRED_CLASSES,
+    hasFourClasses: classesPresent === 4,
+  };
 }
 
 /**

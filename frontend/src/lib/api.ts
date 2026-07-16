@@ -7,6 +7,17 @@ export type AuthUser = {
   primary_role?: string;
   role?: string | null;
   /**
+   * Phase 21 — the role the user is currently operating under.
+   *
+   * Equal to ``role`` for single-role users. For multi-role users
+   * who went through the role-pick step, this is the role they
+   * picked (which can differ from their primary role). The
+   * dashboard router branches on this field so a HOD who picked
+   * STUDENT can read student data without losing their HOD
+   * access on the next login.
+   */
+  active_role?: string | null;
+  /**
    * Permission codenames granted to the user, sourced from the
    * ``permissions`` JWT claim at login time. The list is the union
    * across all of the user's active roles. The server is still the
@@ -33,13 +44,39 @@ export type AuthTokens = {
 };
 
 /**
+ * Phase 21 — one card on the role-picker. Returned as part of
+ * ``available_roles`` from ``POST /auth/login/`` when the user has
+ * more than one active role.
+ */
+export type AvailableRole = {
+  code: string;
+  name: string;
+  description: string;
+};
+
+/**
  * Discriminated union for the login response. The first step may
- * return a token pair (most roles) OR a request to complete the
- * OTP second step (currently SYSTEM_ADMINISTRATOR). The client
- * branches on ``requires_otp`` to decide which view to show.
+ * return any of four shapes (Phase 21):
+ *
+ *   * token pair  — single-role, non-staff
+ *   * ``{requires_otp}``  — single-role, staff
+ *   * ``{requires_role_pick, available_roles, login_token}`` —
+ *     multi-role, non-staff
+ *   * ``{requires_role_pick, ..., requires_otp, otp_token}`` —
+ *     multi-role, staff (the staff-pick hands off to OTP)
+ *
+ * The client branches on ``requires_role_pick`` first; if not set,
+ * falls back to the existing ``requires_otp`` check.
  */
 export type LoginResult =
   | { requires_otp: true; otp_token: string }
+  | {
+      requires_role_pick: true;
+      available_roles: AvailableRole[];
+      login_token: string;
+      requires_otp?: boolean;
+      otp_token?: string;
+    }
   | AuthTokens;
 
 // ---------------------------------------------------------------------------
@@ -532,14 +569,53 @@ export async function loginWithEmailPassword(
  * Returns the same shape as a normal login (token pair + user) on
  * success. Throws on any failure (wrong code, expired token,
  * exhausted attempts) so the caller can render a single error.
+ *
+ * Phase 21 — when the user came through the role-pick path, the
+ * ``loginToken`` is the proof-of-credentials token returned by
+ * ``/auth/select-role/``. The OTP handoff in that case requires
+ * the server to know which role the user picked; the otp_token
+ * alone isn't enough. We pass the loginToken alongside the
+ * otp_token so the verify step can re-issue the JWT against the
+ * chosen role.
  */
 export async function verifyLoginOtp(
   otpToken: string,
   code: string,
+  loginToken?: string,
 ): Promise<AuthTokens> {
   return request<AuthTokens>("/api/v1/auth/verify-otp/", {
     method: "POST",
-    body: JSON.stringify({ otp_token: otpToken, code }),
+    body: JSON.stringify({
+      otp_token: otpToken,
+      code,
+      ...(loginToken ? { login_token: loginToken } : {}),
+    }),
+  });
+}
+
+/**
+ * Phase 21 — second step of multi-role login. Posts the chosen
+ * role code alongside the ``login_token`` from the first step.
+ *
+ * Returns one of two shapes (see ``LoginResult``):
+ *
+ *   * token pair — chosen role is non-staff
+ *   * ``{requires_otp, otp_token}`` — chosen role is staff
+ *
+ * The caller branches the same way it would for a single-role
+ * login: a token pair is the end of the flow, a ``requires_otp``
+ * payload hands off to ``verifyLoginOtp`` (passing the same
+ * ``loginToken`` so the final verify knows which role).
+ */
+export type SelectRoleResult = AuthTokens | { requires_otp: true; otp_token: string; role: string };
+
+export async function selectRoleOnLogin(
+  loginToken: string,
+  roleCode: string,
+): Promise<SelectRoleResult> {
+  return request<SelectRoleResult>("/api/v1/auth/select-role/", {
+    method: "POST",
+    body: JSON.stringify({ login_token: loginToken, role_code: roleCode }),
   });
 }
 

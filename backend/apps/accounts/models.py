@@ -311,9 +311,40 @@ class LoginOTP(UUIDModel, TimestampedModel):
         return self.consumed_at is None and self.expires_at > timezone.now()
 
 
+class LoginToken(UUIDModel, TimestampedModel):
+    """A short-lived, single-use proof-of-credentials token (Phase 21).
+
+    Issued by ``POST /auth/login/`` when the user has more than one
+    active role. The client returns it to ``POST /auth/select-role/``
+    alongside the chosen role code; the row is marked ``consumed_at``
+    on first use so it can't be replayed.
+
+    Deliberately NOT a JWT — the role-pick step needs server-side
+    state (revocation, single-use enforcement) and JWTs don't give us
+    that without a deny-list. The token lifetime is 5 minutes, the
+    same window a user might take to read the role list and click a
+    card.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="login_tokens"
+    )
+    token_hash = models.CharField(max_length=128, unique=True, db_index=True)
+    expires_at = models.DateTimeField(db_index=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    def is_usable(self) -> bool:
+        return self.consumed_at is None and self.expires_at > timezone.now()
+
+    def consume(self) -> None:
+        self.consumed_at = timezone.now()
+        self.save(update_fields=("consumed_at", "updated_at"))
+
+
 __all__ = [
     "EmailVerification",
     "LoginOTP",
+    "LoginToken",
     "PasswordReset",
     "Permission",
     "RefreshToken",

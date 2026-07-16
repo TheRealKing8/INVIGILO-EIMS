@@ -14,7 +14,9 @@ import {
   isValidEmail,
   isValidFullName,
   isValidPassword,
+  passwordChecklist,
   passwordMatches,
+  passwordStrengthScore,
   validateLogin,
   validateRegister,
 } from "./validation";
@@ -76,55 +78,79 @@ describe("isValidPassword", () => {
       expect(r.ok).toBe(false);
     });
 
-    it("rejects 11 characters even with 3-of-4 complexity", () => {
-      // 11 chars, lower + upper + digit. Just under the bar.
-      const r = isValidPassword("Abcdefgh1jk");
+    it("rejects 5 characters even with 3-of-4 complexity", () => {
+      // 5 chars, lower + upper + digit. Just under the bar (Phase 21
+      // lowered the floor from 12 to 6).
+      const r = isValidPassword("Abcd1");
       expect(r).toEqual({
         ok: false,
-        message: "Password must be at least 12 characters.",
+        message: "Password must be at least 6 characters.",
       });
+    });
+
+    it("accepts 6 characters with 3-of-4 complexity", () => {
+      // 6 chars, lower + upper + digit. The new minimum.
+      const r = isValidPassword("Abcde1");
+      expect(r.ok).toBe(true);
     });
   });
 
   describe("complexity (ComplexityValidator — 3 of 4 classes)", () => {
-    it("rejects 12 chars of a single class (lowercase only)", () => {
-      const r = isValidPassword("abcdefghijkl");
+    it("rejects 8 chars of a single class (lowercase only)", () => {
+      const r = isValidPassword("abcdefgh");
       expect(r.ok).toBe(false);
       expect((r as { ok: false; message: string }).message).toMatch(/at least 3 of/i);
     });
 
-    it("rejects 12 chars with only 2 classes (lower + upper)", () => {
-      const r = isValidPassword("Abcdefghijkl");
+    it("rejects 6 chars with only 2 classes (lower + upper)", () => {
+      const r = isValidPassword("AbcdeF");
       expect(r.ok).toBe(false);
     });
 
-    it("rejects 12 chars with only 2 classes (lower + digit)", () => {
-      const r = isValidPassword("abcdefgh1234");
+    it("rejects 6 chars with only 2 classes (lower + digit)", () => {
+      const r = isValidPassword("abcde1");
       expect(r.ok).toBe(false);
     });
 
-    it("accepts 12 chars with 3 classes (lower + upper + digit)", () => {
-      expect(isValidPassword("Abcdefgh1234").ok).toBe(true);
+    it("accepts 6 chars with 3 classes (lower + upper + digit)", () => {
+      expect(isValidPassword("Abcde1").ok).toBe(true);
     });
 
-    it("accepts 12 chars with 4 classes (all four)", () => {
-      expect(isValidPassword("Abcdefgh1!@#").ok).toBe(true);
+    it("accepts 6 chars with 4 classes (all four)", () => {
+      expect(isValidPassword("Abcde!").ok).toBe(true);
     });
   });
 
   describe("common-password block (CommonPasswordValidator)", () => {
     // The function runs checks in order: length → complexity → common.
     // Since the canonical common passwords are all 8-10 chars and the
-    // minimum is 12, the common-password branch is only reachable for
-    // exactly-the-set entries. We document that behavior here.
+    // minimum is 6, the common-password branch is reachable for any
+    // common password that's also 6+ chars (e.g. "password" is 8
+    // chars and would normally pass the length check — but the
+    // common-password list catches it first when complexity allows).
 
-    it("rejects 8-10 char common passwords on the length check first", () => {
-      for (const pw of ["password", "12345678", "admin1234", "qwerty123", "p@ssw0rd"]) {
+    it("rejects 6-10 char common passwords", () => {
+      // We don't pin which validator catches each — the canonical
+      // common-password set is full of low-complexity, low-entropy
+      // strings (single class, two classes, all-digits, etc.) so the
+      // length, complexity, and common-password checks all fire
+      // depending on the input. What we care about is the union:
+      // every one of these is rejected.
+      const shouldReject = [
+        "123456",
+        "1234567",
+        "password",
+        "12345678",
+        "admin1234",
+        "qwerty123",
+        "p@ssw0rd",
+        "letmein123",
+        "welcome1!",
+        "iloveyou!",
+      ];
+      for (const pw of shouldReject) {
         const r = isValidPassword(pw);
-        expect(r.ok).toBe(false);
-        expect((r as { ok: false; message: string }).message).toMatch(
-          /at least 12 characters/i,
-        );
+        expect(r.ok, `expected "${pw}" to be rejected`).toBe(false);
       }
     });
 
@@ -141,12 +167,72 @@ describe("isValidPassword", () => {
 
   describe("happy path", () => {
     it.each([
+      "Abcde1",
       "Strong-Pass-2026",
       "Tr0ub4dor&3xyz", // xkcd-correct-horse staple
       "CorrectHorseBattery!",
     ])("accepts %s", (pw) => {
       expect(isValidPassword(pw).ok).toBe(true);
     });
+  });
+});
+
+describe("passwordStrengthScore (Phase 21 strength meter)", () => {
+  it("returns 0 for empty input", () => {
+    expect(passwordStrengthScore("")).toBe(0);
+  });
+
+  it("returns 0 for inputs below the 6-char minimum", () => {
+    expect(passwordStrengthScore("Ab1")).toBe(0);
+    expect(passwordStrengthScore("Abcde")).toBe(0);
+  });
+
+  it("returns 1 for length-met but no class variety", () => {
+    // 6 chars, single class. The meter rates this as "Weak" (1) —
+    // it's past the length floor but the complexity rule is the real
+    // gate.
+    expect(passwordStrengthScore("abcdef")).toBe(1);
+  });
+
+  it("returns 2 for length-met + 3-of-4 complexity", () => {
+    expect(passwordStrengthScore("Abcde1")).toBe(2);
+  });
+
+  it("returns 2 for length-met + 3-of-4 complexity (no digit)", () => {
+    // Lower + upper + symbol, no digit.
+    expect(passwordStrengthScore("Abcde!")).toBe(2);
+  });
+
+  it("returns 3 for length-met + all 4 classes", () => {
+    expect(passwordStrengthScore("Abcde1!")).toBe(3);
+  });
+
+  it("returns 4 for length-met + all 4 classes + 16+ chars", () => {
+    // 16 chars, 4 classes.
+    expect(passwordStrengthScore("Abcdefgh1!@#$%^&")).toBe(4);
+  });
+});
+
+describe("passwordChecklist (Phase 21 strength meter)", () => {
+  it("reports all three rules unmet for empty input", () => {
+    expect(passwordChecklist("")).toEqual({
+      hasMinLength: false,
+      hasThreeClasses: false,
+      hasFourClasses: false,
+    });
+  });
+
+  it("reports hasMinLength true at exactly 6 chars", () => {
+    expect(passwordChecklist("Abcde1").hasMinLength).toBe(true);
+  });
+
+  it("reports hasThreeClasses true when 3 of 4 classes are present", () => {
+    expect(passwordChecklist("Abcde1").hasThreeClasses).toBe(true);
+    expect(passwordChecklist("Abcde1").hasFourClasses).toBe(false);
+  });
+
+  it("reports hasFourClasses true when all 4 classes are present", () => {
+    expect(passwordChecklist("Abcde1!").hasFourClasses).toBe(true);
   });
 });
 
@@ -240,12 +326,12 @@ describe("validateRegister", () => {
 
   it("reports a password error for a short password", () => {
     const v = validateRegister(OK_NAME, OK_EMAIL, "short", "short");
-    expect(v.password).toMatch(/at least 12 characters/i);
+    expect(v.password).toMatch(/at least 6 characters/i);
     expect(v.isValid).toBe(false);
   });
 
   it("reports a password error for missing complexity", () => {
-    const v = validateRegister(OK_NAME, OK_EMAIL, "abcdefghijkl", "abcdefghijkl");
+    const v = validateRegister(OK_NAME, OK_EMAIL, "abcdef", "abcdef");
     expect(v.password).toMatch(/at least 3 of/i);
     expect(v.isValid).toBe(false);
   });

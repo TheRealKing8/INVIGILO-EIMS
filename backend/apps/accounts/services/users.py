@@ -20,6 +20,13 @@ from apps.core.exceptions import (
 
 from ..models import User, UserRole, Role
 
+# Roles a self-registered user is allowed to land on. Staff roles
+# (SA / EO / HoD / Dean / Invigilator / Security) must be assigned by
+# an admin via ``POST /users/{id}/set-roles/`` — the registration
+# endpoint accepts only the two end-user roles. This is the privilege
+# boundary between "anyone can sign up" and "operators elevate you".
+SELF_REGISTRATION_ALLOWED_ROLES = frozenset({"STUDENT", "GUEST"})
+
 
 @transaction.atomic
 def create_user(  # type: ignore[no-untyped-def]
@@ -30,12 +37,25 @@ def create_user(  # type: ignore[no-untyped-def]
     roles: list[str] | None = None,
     is_email_verified: bool = False,
     assigned_by: User | None = None,
+    self_registration: bool = False,
     **extra_fields: Any,
 ) -> User:
     """Create a user and optionally assign roles.
 
     Raises ``ConflictError`` if the email is already taken. Raises
     ``ValidationFailedError`` if the password is not acceptable.
+
+    ``self_registration`` is the privilege boundary. When ``True``
+    (the public ``/auth/register/`` path):
+
+    * ``roles`` defaults to ``["STUDENT"]`` if the caller didn't
+      pass any — self-registered users always get at least STUDENT
+      so the dashboard router has a role to branch on.
+    * ``roles`` is filtered to :data:`SELF_REGISTRATION_ALLOWED_ROLES`.
+      STAFF role codes are silently dropped (not 422'd) so the public
+      path can't be probed for the existence of those codes; the
+      final fallback is still ``["STUDENT"]`` so the user lands
+      somewhere useful.
     """
     email_normalised = (email or "").strip().lower()
     if User.all_objects.filter(email__iexact=email_normalised).exists():
@@ -55,7 +75,17 @@ def create_user(  # type: ignore[no-untyped-def]
         **extra_fields,
     )
 
-    for code in roles or []:
+    if self_registration:
+        # Public path: default to STUDENT, drop anything privileged.
+        safe = [r for r in (roles or []) if r in SELF_REGISTRATION_ALLOWED_ROLES]
+        if not safe:
+            safe = ["STUDENT"]
+        resolved_codes = safe
+    else:
+        # Admin path: take the caller-supplied list verbatim.
+        resolved_codes = list(roles or [])
+
+    for code in resolved_codes:
         try:
             role = Role.objects.get(code=code, is_active=True)
         except Role.DoesNotExist as exc:
@@ -165,6 +195,7 @@ def unlock_user(user: User) -> None:
 
 
 __all__ = [
+    "SELF_REGISTRATION_ALLOWED_ROLES",
     "admin_reset_password",
     "change_password",
     "create_user",

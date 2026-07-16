@@ -15,20 +15,24 @@ import {
 import { AuthShell } from "@/components/auth-shell";
 import { PasswordField } from "@/components/password-field";
 import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { StatusBanner } from "@/components/ui/status-banner";
 import {
   getStoredAccessToken,
   loginWithEmailPassword,
   saveAuthTokens,
+  selectRoleOnLogin,
   verifyLoginOtp,
+  type AuthUser,
+  type AvailableRole,
 } from "@/lib/api";
 import { notifyAuthChange } from "@/lib/auth";
 import { validateLogin } from "@/lib/validation";
 
 const OTP_LENGTH = 6;
 
-type Step = "credentials" | "otp";
+type Step = "credentials" | "role" | "otp";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -38,7 +42,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
-  // Step 2 — OTP
+  // Step 2a — role pick (Phase 21, only for multi-role users)
+  const [availableRoles, setAvailableRoles] = useState<AvailableRole[]>([]);
+  const [loginToken, setLoginToken] = useState<string | null>(null);
+  // Step 2b — OTP (Phase 21 may be reached from credentials OR from role pick)
   const [otpDigits, setOtpDigits] = useState<string[]>(
     Array.from({ length: OTP_LENGTH }, () => ""),
   );
@@ -96,10 +103,28 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try {
       const result = await loginWithEmailPassword(email, password);
-      // The server returns one of two shapes (see api.ts LoginResult):
-      //   1. { requires_otp: true, otp_token }  — second step required
-      //   2. AuthTokens                         — proceed as before
-      if ("requires_otp" in result) {
+      // The server returns one of three shapes (Phase 21, see
+      // ``LoginResult`` in api.ts):
+      //   1. { requires_role_pick, available_roles, login_token }
+      //      — multi-role user, show the picker
+      //   2. { requires_otp, otp_token }
+      //      — single-role staff user, second step required
+      //   3. AuthTokens
+      //      — proceed as before
+      if ("requires_role_pick" in result) {
+        setAvailableRoles(result.available_roles);
+        setLoginToken(result.login_token);
+        // Phase 21 — the server may also pre-issue an otp_token so
+        // the staff-pick hand-off doesn't have to round-trip again.
+        // We stash it for the OTP step; if the user picks a
+        // non-staff role, it's simply unused.
+        if (result.requires_otp && result.otp_token) {
+          setOtpToken(result.otp_token);
+        }
+        setStep("role");
+        return;
+      }
+      if ("requires_otp" in result && result.otp_token) {
         setOtpToken(result.otp_token);
         setOtpDigits(Array.from({ length: OTP_LENGTH }, () => ""));
         setStep("otp");
@@ -108,8 +133,11 @@ export default function LoginPage() {
       }
       // Normal login: persist tokens and route to dashboard. The
       // refresh token arrives as an httpOnly cookie, so we never
-      // see or store it on the client.
-      saveAuthTokens(result.access, result.user);
+      // see or store it on the client. By this point both the
+      // role-pick and OTP branches have returned, so ``result`` is
+      // the ``AuthTokens`` variant.
+      const tokens = result as Extract<typeof result, { access: string; user: AuthUser }>;
+      saveAuthTokens(tokens.access, tokens.user);
       notifyAuthChange();
       router.push("/dashboard");
     } catch (err) {
@@ -118,6 +146,43 @@ export default function LoginPage() {
           ? err.message
           : "We couldn't sign you in. Double-check your credentials and try again.",
       );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleRoleSelect(role: AvailableRole) {
+    if (!loginToken) return;
+    setIsSubmitting(true);
+    setServerError(null);
+    try {
+      const result = await selectRoleOnLogin(loginToken, role.code);
+      if ("requires_otp" in result) {
+        // The chosen role is staff — hand off to the OTP step.
+        // We carry the ``login_token`` through to the verify step
+        // so the server can re-issue the JWT against the chosen
+        // role, not the user's primary role.
+        setOtpToken(result.otp_token);
+        setOtpDigits(Array.from({ length: OTP_LENGTH }, () => ""));
+        setStep("otp");
+        setResendIn(60);
+        return;
+      }
+      // Non-staff pick: tokens in hand, route to dashboard.
+      saveAuthTokens(result.access, result.user);
+      notifyAuthChange();
+      router.push("/dashboard");
+    } catch (err) {
+      setServerError(
+        err instanceof Error
+          ? err.message
+          : "We couldn't complete the role pick. Please try again.",
+      );
+      // The role-pick session might be expired (5-min TTL). Drop
+      // back to credentials so the user can re-authenticate.
+      setStep("credentials");
+      setLoginToken(null);
+      setAvailableRoles([]);
     } finally {
       setIsSubmitting(false);
     }
@@ -135,7 +200,10 @@ export default function LoginPage() {
     setServerError(null);
     setIsSubmitting(true);
     try {
-      const tokens = await verifyLoginOtp(otpToken, code);
+      // Phase 21 — if we came through the role-pick step, we have a
+      // ``login_token`` to carry through so the verify step can
+      // re-issue the JWT against the chosen role.
+      const tokens = await verifyLoginOtp(otpToken, code, loginToken ?? undefined);
       saveAuthTokens(tokens.access, tokens.user);
       notifyAuthChange();
       router.push("/dashboard");
@@ -208,7 +276,7 @@ export default function LoginPage() {
     setServerError(null);
     try {
       const result = await loginWithEmailPassword(email, password);
-      if ("requires_otp" in result) {
+      if ("requires_otp" in result && result.otp_token) {
         setOtpToken(result.otp_token);
         setOtpDigits(Array.from({ length: OTP_LENGTH }, () => ""));
         setResendIn(60);
@@ -228,6 +296,8 @@ export default function LoginPage() {
     setStep("credentials");
     setOtpToken(null);
     setOtpDigits(Array.from({ length: OTP_LENGTH }, () => ""));
+    setLoginToken(null);
+    setAvailableRoles([]);
     setServerError(null);
     setSubmitAttempted(false);
     setResendIn(0);
@@ -236,6 +306,70 @@ export default function LoginPage() {
   // Only render inline errors after the first submit attempt.
   const showEmailError = submitAttempted ? emailError : null;
   const showPasswordError = submitAttempted ? passwordError : null;
+
+  if (step === "role") {
+    return (
+      <AuthShell
+        title="Pick a role for this session"
+        subtitle={`${email} holds more than one role — choose the one you want to sign in as. You can switch later by signing out.`}
+        hero={{
+          eyebrow: "Almost there — Operations console",
+          headline: "Different hats, same operator.",
+        }}
+      >
+        <div className="space-y-5">
+          {serverError ? (
+            <StatusBanner tone="danger" title="We couldn't complete the role pick">
+              {serverError}
+            </StatusBanner>
+          ) : null}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {availableRoles.map((role) => (
+              <button
+                key={role.code}
+                type="button"
+                onClick={() => handleRoleSelect(role)}
+                disabled={isSubmitting}
+                className="group flex flex-col items-start gap-1.5 rounded-2xl border border-ink-200 bg-surface p-4 text-left shadow-[var(--shadow-card)] transition hover:border-brand-400 hover:shadow-[var(--shadow-card-hover)] focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <div className="flex w-full items-center justify-between">
+                  <span className="text-sm font-semibold text-ink-900">
+                    {role.name}
+                  </span>
+                  <Icon
+                    name="arrow-right"
+                    className="h-4 w-4 text-ink-400 transition group-hover:text-brand-600"
+                  />
+                </div>
+                <span className="text-xs font-mono uppercase tracking-wide text-brand-700">
+                  {role.code}
+                </span>
+                {role.description ? (
+                  <span className="text-xs text-ink-600">
+                    {role.description}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between text-xs">
+            <button
+              type="button"
+              onClick={handleUseDifferentAccount}
+              className="font-medium text-ink-600 transition hover:text-ink-900"
+            >
+              Use a different account
+            </button>
+            <span className="text-ink-500">
+              This choice lasts until you sign out.
+            </span>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
 
   if (step === "otp") {
     return (

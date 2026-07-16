@@ -41,10 +41,83 @@ from apps.core.exceptions import (
 from ..models import (
     EmailVerification,
     LoginOTP,
+    LoginToken,
     PasswordReset,
     RefreshToken,
+    Role,
     User,
 )
+
+
+# ----------------------------------------------------------------------------
+# Role picker (Phase 21)
+# ----------------------------------------------------------------------------
+# One-line descriptions for each role code. Used by the multi-role
+# login flow to render the role-picker cards. Kept as a hardcoded
+# dict (instead of a ``Role.description`` column) so a new role
+# doesn't require a migration — adding a new role is an admin
+# action, not a schema change.
+ROLE_DESCRIPTIONS: dict[str, str] = {
+    "SYSTEM_ADMINISTRATOR": "Full access to users, roles, and system configuration.",
+    "EXAMINATION_OFFICER": "Run allocation engines, manage sessions, approve conflicts.",
+    "FACULTY_DEAN": "Read-only oversight across your faculty's exam schedule.",
+    "HEAD_OF_DEPARTMENT": "Coordinate sessions and staff for your department.",
+    "INVIGILATOR": "View your assigned sessions, mark attendance, report incidents.",
+    "SECURITY_OFFICER": "Door control: scan QR codes, verify registrations.",
+    "STUDENT": "View your exam timetable, download your admit card.",
+    "GUEST": "Read-only access to public schedules and reports.",
+}
+
+
+def available_roles_for(user: User) -> list[dict[str, str]]:
+    """Return the active roles a user holds, ordered by precedence.
+
+    Mirrors :py:attr:`User.primary_role_code` ordering so the
+    role-picker puts the highest-privilege option first. Each entry
+    is ``{code, name, description}`` — the name comes from the
+    ``Role`` table; the description comes from
+    :data:`ROLE_DESCRIPTIONS`. Unknown codes fall back to an empty
+    description so a new role added mid-flight doesn't break the
+    picker.
+    """
+    # Use the same precedence list as User.primary_role_code so the
+    # cards render in the same order the dashboard's role-branched
+    # home would resolve to.
+    precedence = (
+        "SYSTEM_ADMINISTRATOR",
+        "EXAMINATION_OFFICER",
+        "FACULTY_DEAN",
+        "HEAD_OF_DEPARTMENT",
+        "INVIGILATOR",
+        "SECURITY_OFFICER",
+        "STUDENT",
+        "GUEST",
+    )
+    held = list(
+        Role.objects.filter(
+            code__in=precedence, role_users__user=user, is_active=True
+        )
+    )
+    held.sort(key=lambda r: precedence.index(r.code) if r.code in precedence else len(precedence))
+    return [
+        {
+            "code": r.code,
+            "name": r.name,
+            "description": ROLE_DESCRIPTIONS.get(r.code, ""),
+        }
+        for r in held
+    ]
+
+
+def requires_role_pick(user: User) -> bool:
+    """Return True if the user holds more than one active role.
+
+    Single-role users skip the picker entirely — the JWT is issued
+    with their primary role code. Multi-role users get a
+    ``login_token`` and the role-picker UI; they pick a role and the
+    ``select_role`` view re-issues the JWT with that role.
+    """
+    return user.roles().filter(is_active=True).count() > 1
 
 
 # ----------------------------------------------------------------------------
@@ -153,14 +226,24 @@ def issue_token_pair(
     *,
     request: Any = None,
     response: Any = None,
+    role_code: Optional[str] = None,
 ) -> dict[str, Any]:
     """Issue an access + refresh pair for the given user.
 
+    ``role_code`` is the role claim baked into the JWT. When omitted
+    it falls back to :py:attr:`User.primary_role_code` (the original
+    Phase 19 contract). The :func:`select_role` flow passes an
+    explicit code so the user can land on a non-primary role they
+    legitimately hold (e.g. an INVIGILATOR who also holds STUDENT
+    and wants to wear the student hat).
+
     The refresh token is generated with ``secrets`` (not by SimpleJWT) so
     we can hash and persist it. The access token is signed with
-    SimpleJWT; it carries the user id, primary role, and the full set
-    of permission codenames granted to the user (the union across all
-    active roles, not just the primary one). The frontend uses
+    SimpleJWT; it carries the user id, the chosen role, and the full
+    set of permission codenames granted to the user (the union across
+    all active roles, not just the chosen one — the user is still
+    operating with the full permission union, the ``role`` claim is
+    a UI/branch signal not a sandbox). The frontend uses
     ``permissions`` for client-side gating; the server is still the
     source of truth and re-checks ``HasPermission`` on every request.
 
@@ -169,6 +252,9 @@ def issue_token_pair(
     the response body when ``settings.JWT_INCLUDE_REFRESH_IN_BODY``
     is true — for non-browser clients and tests.
     """
+    if role_code is None:
+        role_code = user.primary_role_code
+
     # Build the permission set once and reuse for the JWT claim and the
     # response payload. ``user.permissions()`` is a queryset; we
     # materialise it to a list to avoid round-tripping for the two
@@ -180,7 +266,7 @@ def issue_token_pair(
     access = AccessToken()
     access["user_id"] = str(user.id)
     access["email"] = user.email
-    access["role"] = user.primary_role_code
+    access["role"] = role_code
     access["permissions"] = permission_codes
     access["iss"] = settings.SIMPLE_JWT["ISSUER"]
     access["aud"] = settings.SIMPLE_JWT["AUDIENCE"]
@@ -221,7 +307,8 @@ def issue_token_pair(
             "id": str(user.id),
             "email": user.email,
             "full_name": user.full_name,
-            "role": user.primary_role_code,
+            "role": role_code,
+            "active_role": role_code,
             "permissions": permission_codes,
             "is_email_verified": user.is_email_verified,
         },
@@ -488,18 +575,93 @@ def requires_login_otp(user: User) -> bool:
     return primary is not None and primary in _OTP_REQUIRED_ROLES
 
 
+# ----------------------------------------------------------------------------
+# LoginToken — proof-of-credentials for the role-pick step (Phase 21)
+# ----------------------------------------------------------------------------
+LOGIN_TOKEN_TTL_SECONDS = 5 * 60  # 5 minutes — long enough to read the role list and click a card
+
+
+def issue_login_token(user: User) -> str:
+    """Create a :class:`LoginToken` row for ``user`` and return the raw value.
+
+    Any prior unconsumed rows for the same user are revoked first so a
+    new login replaces an old one cleanly. The raw token is the only
+    handle the client has; we only store its SHA-256 hash.
+    """
+    LoginToken.objects.filter(user=user, consumed_at__isnull=True).update(
+        consumed_at=timezone.now()
+    )
+    raw = secrets.token_urlsafe(32)
+    LoginToken.objects.create(
+        user=user,
+        token_hash=_hash_token(raw),
+        expires_at=timezone.now() + timezone.timedelta(seconds=LOGIN_TOKEN_TTL_SECONDS),
+    )
+    return raw
+
+
+def lookup_login_token(raw: str) -> Optional[User]:
+    """Return the user associated with ``raw`` if the token is still usable.
+
+    Does NOT consume the token — the caller can validate other things
+    (e.g. that the user holds the chosen role) and only call
+    :func:`consume_login_token` on success. Returns ``None`` for any
+    failure mode (unknown token, expired, already consumed) so an
+    attacker can't tell *why* it failed.
+    """
+    if not raw:
+        return None
+    try:
+        row = LoginToken.objects.select_related("user").get(token_hash=_hash_token(raw))
+    except LoginToken.DoesNotExist:
+        return None
+    if not row.is_usable():
+        return None
+    return row.user
+
+
+def consume_login_token(raw: str) -> Optional[User]:
+    """Validate ``raw`` and return the associated user on success.
+
+    Returns ``None`` for any failure mode (unknown token, expired,
+    already consumed). Mirrors :func:`consume_login_otp` in shape —
+    we deliberately collapse every failure so an attacker can't tell
+    *why* it failed.
+
+    The row is marked ``consumed_at`` on first successful use so the
+    same ``login_token`` can't be replayed against a different role.
+    """
+    if not raw:
+        return None
+    try:
+        row = LoginToken.objects.select_related("user").get(token_hash=_hash_token(raw))
+    except LoginToken.DoesNotExist:
+        return None
+    if not row.is_usable():
+        return None
+    row.consume()
+    return row.user
+
+
 __all__ = [
+    "LOGIN_TOKEN_TTL_SECONDS",
+    "ROLE_DESCRIPTIONS",
     "authenticate",
+    "available_roles_for",
     "clear_refresh_cookie",
     "confirm_email_verification",
     "confirm_password_reset",
     "consume_login_otp",
+    "consume_login_token",
     "issue_email_verification",
     "issue_login_otp",
+    "issue_login_token",
     "issue_password_reset",
     "issue_token_pair",
+    "lookup_login_token",
     "read_refresh_from_request",
     "requires_login_otp",
+    "requires_role_pick",
     "revoke_refresh",
     "rotate_refresh",
     "set_refresh_cookie",

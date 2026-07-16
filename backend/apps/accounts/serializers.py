@@ -155,21 +155,36 @@ class LoginOTPVerifySerializer(serializers.Serializer):
     code = serializers.CharField(write_only=True, min_length=6, max_length=6)
 
 
+class SelectRoleSerializer(serializers.Serializer):
+    """Body for POST /auth/select-role/ (Phase 21 multi-role login).
+
+    ``login_token`` is the short-lived proof-of-credentials token
+    returned by the first login step; ``role_code`` is the role the
+    user picked from the role-picker cards. The role must be one
+    the user actually holds — anything else raises a 422 so a stale
+    picker card can't be replayed against a role the user has since
+    been removed from.
+    """
+
+    login_token = serializers.CharField(write_only=True)
+    role_code = serializers.CharField(write_only=True)
+
+
 class AdminPasswordResetSerializer(serializers.Serializer):
     """Body for POST /api/v1/users/{id}/reset-password/.
 
     The admin types the new password twice (to catch typos). The
     server runs the full ``validate_password`` complexity check on
-    top of this — the ``min_length=12`` here is the cheapest sanity
-    gate, the validators do the real work.
+    top of this — the ``MinimumLengthValidator`` is the cheapest
+    sanity gate, ``ComplexityValidator`` is the real gate.
 
     We never echo the new password back in the response — it's
     deliberately write-only and the field names are short to keep
     audit logs compact.
     """
 
-    new_password = serializers.CharField(write_only=True, min_length=12, max_length=128)
-    confirm_password = serializers.CharField(write_only=True, min_length=12, max_length=128)
+    new_password = serializers.CharField(write_only=True, max_length=128)
+    confirm_password = serializers.CharField(write_only=True, max_length=128)
 
     def validate(self, attrs):  # type: ignore[no-untyped-def]
         if attrs.get("new_password") != attrs.get("confirm_password"):
@@ -238,6 +253,7 @@ __all__ = [
     "PasswordResetRequestSerializer",
     "RefreshRequestSerializer",
     "RoleSerializer",
+    "SelectRoleSerializer",
     "SetRolesSerializer",
     "UserCreateSerializer",
     "UserSerializer",

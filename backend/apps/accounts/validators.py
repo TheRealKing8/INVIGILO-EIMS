@@ -1,8 +1,9 @@
 """Password validators for INVIGILO.
 
-These implement the policy in ``docs/02-requirements.md`` §1.1:
+These implement the policy in ``docs/02-requirements.md`` §1.1 (and the
+Phase 21 revision that lowered the length floor from 12 to 6):
 
-* Minimum 12 characters.
+* Minimum 6 characters.
 * At least three of: lowercase, uppercase, digit, symbol.
 * Not in a list of common passwords (top 1,000).
 """

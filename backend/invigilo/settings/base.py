@@ -32,7 +32,7 @@ env = environ.Env(
     DJANGO_ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
     DJANGO_CORS_ALLOWED_ORIGINS=(list, ["http://localhost:3000"]),
     EMAIL_USE_TLS=(bool, False),
-    PASSWORD_MIN_LENGTH=(int, 12),
+    PASSWORD_MIN_LENGTH=(int, 6),
     LOCKOUT_THRESHOLD=(int, 5),
     LOCKOUT_DURATION_MINUTES=(int, 15),
     JWT_ACCESS_LIFETIME_MINUTES=(int, 15),
@@ -210,8 +210,11 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "apps.accounts.validators.CommonPasswordValidator"},
 ]
 
-# Password policy
-PASSWORD_MIN_LENGTH = env.int("PASSWORD_MIN_LENGTH", default=12)
+# Password policy — Phase 21 lowered the floor from 12 to 6 characters.
+# The 3-of-4 character-classes complexity rule (upper / lower / digit /
+# symbol) is enforced by ``apps.accounts.validators.ComplexityValidator``
+# and is the real gate; this setting is just the minimum length.
+PASSWORD_MIN_LENGTH = env.int("PASSWORD_MIN_LENGTH", default=6)
 
 # Account lockout
 LOCKOUT_THRESHOLD = env.int("LOCKOUT_THRESHOLD", default=5)
