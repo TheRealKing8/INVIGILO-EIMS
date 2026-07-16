@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { Icon } from "@/components/ui/icon";
-import { registerWithEmailPassword, saveAuthTokens } from "@/lib/api";
+import { registerWithEmailPassword } from "@/lib/api";
 import { validateRegister } from "@/lib/validation";
 
 export default function RegisterPage() {
@@ -27,6 +27,13 @@ export default function RegisterPage() {
   const [serverError, setServerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  // Success state — set once the server confirms the account was
+  // created. We deliberately do NOT auto-login on register (the
+  // server returns an access token but we ignore it here); instead
+  // we show a confirmation screen and let the user sign in. The
+  // server-side log-out keeps the refresh-cookie story simple:
+  // there is no session to clear on register.
+  const [createdEmail, setCreatedEmail] = useState<string | null>(null);
 
   const validation = useMemo(
     () => validateRegister(fullName, email, password, confirmPassword),
@@ -58,13 +65,12 @@ export default function RegisterPage() {
 
     setIsSubmitting(true);
     try {
-      const data = await registerWithEmailPassword(fullName, email, password);
-      // The refresh token is delivered as an httpOnly cookie by the
-      // server; ``data.refresh`` is only present for non-browser
-      // clients (CLI, mobile, tests). We never read or persist it on
-      // the web — the cookie travels automatically on every request.
-      saveAuthTokens(data.access, data.user);
-      router.push("/dashboard");
+      await registerWithEmailPassword(fullName, email, password);
+      // Success — show the confirmation screen instead of bouncing
+      // straight to the dashboard. The server has already set the
+      // refresh cookie; we don't persist the access token so the
+      // user has to sign in normally.
+      setCreatedEmail(email);
     } catch (err) {
       setServerError(
         err instanceof Error
@@ -76,11 +82,68 @@ export default function RegisterPage() {
     }
   }
 
+  function handleUseDifferentEmail() {
+    // Back to a clean form so the user can retry (e.g. typo'd email).
+    setCreatedEmail(null);
+    setPassword("");
+    setConfirmPassword("");
+    setServerError(null);
+    setSubmitAttempted(false);
+  }
+
   // Only show inline errors after the first submit attempt.
   const showFullNameError = submitAttempted ? fullNameError : null;
   const showEmailError = submitAttempted ? emailError : null;
   const showPasswordError = submitAttempted ? passwordError : null;
   const showConfirmError = submitAttempted ? confirmPasswordError : null;
+
+  if (createdEmail) {
+    return (
+      <AuthShell
+        title="Account created"
+        subtitle="Your Invigilo account is ready. Sign in to start scheduling sessions and allocating staff."
+        altLink={{ href: "/login", label: "Sign in instead" }}
+        hero={{
+          eyebrow: "Welcome to Invigilo",
+          headline: "One step left — sign in to get going.",
+        }}
+      >
+        <div className="space-y-5">
+          <StatusBanner
+            tone="success"
+            title="Account created successfully"
+          >
+            We saved the details for <span className="font-semibold">{createdEmail}</span>.
+            Sign in with that email and the password you just set to continue.
+          </StatusBanner>
+
+          <Button
+            type="button"
+            size="lg"
+            fullWidth
+            onClick={() => router.push("/login")}
+            iconRight="arrow-right"
+          >
+            Proceed to login
+          </Button>
+
+          <div className="flex items-center justify-between text-xs">
+            <button
+              type="button"
+              onClick={handleUseDifferentEmail}
+              className="font-medium text-ink-600 transition hover:text-ink-900"
+            >
+              Use a different email
+            </button>
+            <span className="inline-flex items-center gap-1.5 text-ink-500">
+              <Icon name="bell" className="h-3.5 w-3.5" />
+              The session is not active until you sign in.
+            </span>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell
