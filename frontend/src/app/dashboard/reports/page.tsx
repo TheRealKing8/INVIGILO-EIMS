@@ -5,13 +5,22 @@
  * flow that pipes `downloadReportExport`'s blob into a
  * temporary anchor. The "New export" composer posts a job
  * to `createReportExport`.
+ *
+ * Phase 23 — the right rail used to render hard-coded fake
+ * numbers ("Activity, last 12 weeks" sparkline + 94% progress
+ * bar + a redundant "operational insights" tile that mirrored
+ * the KPI row). It now consumes the live `/analytics/summary/`
+ * endpoint so the cycle trends and severity breakdown shown
+ * here match what the Analytics page renders. The data call
+ * is best-effort — a 403 from a missing codename degrades to
+ * the empty state instead of breaking the page.
  */
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { DashboardShell } from "@/components/dashboard-shell";
-import { Badge } from "@/components/ui/badge";
+import { Badge, type Tone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDark, CardHeader } from "@/components/ui/card";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -21,7 +30,10 @@ import {
   createReportExport,
   downloadReportExport,
   getActiveExamPeriod,
+  getAnalyticsSummary,
   getReportExports,
+  type AnalyticsIncidentsBySeverity,
+  type AnalyticsSummary,
   type ExamPeriod,
   type Paginated,
   type ReportExport,
@@ -45,6 +57,17 @@ const formatIcon: Record<ReportExport["format"], IconName> = {
   pdf: "document",
   excel: "document",
   csv: "document",
+};
+
+// Mirrors the map on the Analytics page so the two surfaces stay
+// in step. The keys here are the same `severity` codes the
+// analytics endpoint returns — see
+// `backend/apps/analytics/services.py::_incidents_by_severity`.
+const severityTone: Record<keyof AnalyticsIncidentsBySeverity, Tone> = {
+  low: "neutral",
+  medium: "warning",
+  high: "danger",
+  critical: "info",
 };
 
 function fmtSize(bytes: number): string {
@@ -78,16 +101,39 @@ export default function ReportsPage() {
   const { data, isLoading, error, refresh } = useFetch<{
     exports: Paginated<ReportExport> | null;
     period: ExamPeriod | null;
+    analytics: AnalyticsSummary | null;
   }>(async () => {
-    const [exports, period] = await Promise.all([
+    // Best-effort fan-out: each leg is independently caught so a
+    // missing codename (analytics) or empty active period (period)
+    // doesn't poison the rest. The page shows a partial view rather
+    // than a hard error banner for any single missing leg.
+    const [exports, period, analytics] = await Promise.all([
       getReportExports({ page: 1, page_size: 25 }).catch(() => null),
       getActiveExamPeriod().catch(() => null),
+      getAnalyticsSummary().catch(() => null),
     ]);
-    return { exports, period };
+    return { exports, period, analytics };
   }, []);
 
   const exports = data?.exports?.results ?? [];
   const total = data?.exports?.count ?? 0;
+  // Sparkline values from the 12-week attendance trend. Memoised
+  // so the array isn't rebuilt on every composer keystroke.
+  const trendValues = useMemo(
+    () => (data?.analytics?.attendance_trend ?? []).map((b) => b.count),
+    [data?.analytics?.attendance_trend],
+  );
+  const trendTotal = useMemo(
+    () =>
+      (data?.analytics?.attendance_trend ?? []).reduce(
+        (sum, b) => sum + b.count,
+        0,
+      ),
+    [data?.analytics?.attendance_trend],
+  );
+  const coverage = data?.analytics?.coverage ?? null;
+  const periodCode = data?.period?.code ?? data?.analytics?.period_code ?? null;
+  const severity = data?.analytics?.incidents_by_severity ?? null;
 
   async function handleDownload(exp: ReportExport) {
     if (!exp.download_url) {
@@ -288,48 +334,67 @@ export default function ReportsPage() {
 
         <div className="space-y-6">
           <CardDark>
-            <p className="eyebrow text-brand-300">Operational insights</p>
+            <p className="eyebrow text-brand-300">Field signal</p>
             <h3 className="mt-2 text-2xl font-semibold tracking-tight text-white">
-              Track what matters this cycle
+              Incidents by severity
             </h3>
             <p className="mt-2 text-sm text-brand-100/80">
-              Attendance, staffing balance, room usage, and incident trends
-              across the current examination period.
+              Live counts from the current examination period. Zero-filled
+              across all four levels so a quiet day still reads as a quiet
+              day, not a missing data state.
             </p>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              {[
-                { label: "PDF", value: String(exports.filter((e) => e.format === "pdf").length) },
-                { label: "Excel", value: String(exports.filter((e) => e.format === "excel").length) },
-                { label: "CSV", value: String(exports.filter((e) => e.format === "csv").length) },
-                { label: "Total", value: String(exports.length) },
-              ].map((s) => (
-                <div
-                  key={s.label}
-                  className="rounded-2xl bg-white/[0.04] p-4 ring-1 ring-inset ring-white/10"
-                >
-                  <p className="text-2xl font-semibold tnum text-white">{s.value}</p>
-                  <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-200/80">
-                    {s.label}
-                  </p>
-                </div>
-              ))}
+            <div className="mt-5 space-y-2">
+              {(Object.keys(severityTone) as (keyof AnalyticsIncidentsBySeverity)[]).map(
+                (key) => {
+                  const count = severity?.[key] ?? 0;
+                  return (
+                    <div
+                      key={key}
+                      className="flex items-center justify-between gap-3 rounded-2xl bg-white/[0.04] px-3 py-2 ring-1 ring-inset ring-white/10"
+                    >
+                      <Badge tone={severityTone[key]} withDot>
+                        {key}
+                      </Badge>
+                      <span className="text-sm font-semibold tnum text-white">
+                        {count}
+                      </span>
+                    </div>
+                  );
+                },
+              )}
             </div>
+            <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-200/80">
+              {periodCode ? `Period ${periodCode}` : "No active period"}
+            </p>
           </CardDark>
 
           <Card>
-            <CardHeader eyebrow="Trend" title="Activity, last 12 weeks" />
+            <CardHeader eyebrow="Trend" title="Check-ins, last 12 weeks" />
             <div className="mt-5">
               <Sparkline
-                values={[88, 90, 89, 91, 92, 91, 93, 94, 93, 95, 94, 96]}
+                values={trendValues.length > 0 ? trendValues : [0]}
                 tone="success"
                 width={300}
                 height={64}
               />
             </div>
             <div className="mt-4">
-              <ProgressBar value={94} tone="success" />
+              <ProgressBar
+                value={
+                  coverage == null
+                    ? trendTotal > 0
+                      ? Math.min(100, Math.round((trendValues.at(-1) ?? 0) / trendTotal * 100))
+                      : 0
+                    : Math.round(coverage)
+                }
+                tone={coverage != null && coverage < 80 ? "warning" : "success"}
+              />
             </div>
-            <p className="mt-2 text-xs text-ink-500">Cycle target: 95%</p>
+            <p className="mt-2 text-xs text-ink-500">
+              {coverage != null
+                ? `Latest run coverage ${coverage.toFixed(0)}% · period ${periodCode ?? "—"}`
+                : `12-week total ${trendTotal} check-ins${periodCode ? ` · period ${periodCode}` : ""}`}
+            </p>
           </Card>
         </div>
       </div>

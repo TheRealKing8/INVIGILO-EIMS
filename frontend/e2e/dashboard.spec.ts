@@ -95,6 +95,35 @@ test.describe("Dashboard module pages (live)", () => {
     await expect(page.getByText(/legend:/i)).toBeVisible();
   });
 
+  test("reports page shows live sparkline (Phase 23 wire-up)", async ({ page }) => {
+    // Phase 23 — the reports page now consumes /analytics/summary/
+    // for the right-rail sparkline + severity chips. This test
+    // asserts the sparkline SVG is rendered (the value is real, not
+    // hard-coded). We don't assert exact numbers — the dev DB may
+    // have zero check-ins, which renders the empty-state branch.
+    const ok = await signInOrSkip(page);
+    if (!ok) {
+      test.skip(true, `Could not sign in as ${EMAIL}; skipping live module smoke.`);
+      return;
+    }
+    await page.goto("/dashboard/reports");
+    // The Card with the trend header is rendered if and only if the
+    // page is rendering the live layout (not the legacy hard-coded
+    // one we removed). "Check-ins, last 12 weeks" is the new title.
+    await expect(
+      page.getByText(/check-ins, last 12 weeks/i),
+    ).toBeVisible({ timeout: 10_000 });
+    // The Sparkline component renders an <svg> with a <path>. Assert
+    // the path element exists — that's the live data, not the
+    // static array the page used to ship.
+    const sparklinePath = page.locator("svg path").first();
+    await expect(sparklinePath).toBeVisible();
+    // And the "Field signal" card now shows the live severity
+    // breakdown instead of the redundant export-format counts.
+    await expect(page.getByText(/field signal/i)).toBeVisible();
+    await expect(page.getByText(/incidents by severity/i)).toBeVisible();
+  });
+
   test("exam session detail page renders after row click", async ({ page }) => {
     const ok = await signInOrSkip(page);
     if (!ok) {
