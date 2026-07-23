@@ -214,6 +214,19 @@ export const ROUTE_ACCESS: ReadonlyArray<RouteAccess> = [
       "STUDENT",
     ]),
   },
+  {
+    // Phase 25 — student self-service. The URL pattern
+    // ``/dashboard/student/*`` is owned by the STUDENT role. The
+    // ``/dashboard/exams`` entry above intentionally does NOT list
+    // STUDENT (it's an operations surface); putting the student
+    // card under a dedicated STUDENT-only tree keeps the two
+    // audiences from bleeding into each other.
+    href: "/dashboard/student",
+    label: "My exams",
+    description: "Your exam cards, QR codes, and check-ins",
+    icon: "users",
+    roles: new Set<RoleCode>(["STUDENT"]),
+  },
 ];
 
 /**
@@ -237,7 +250,17 @@ export function canAccessRoute(
   href: string,
 ): boolean {
   const role = (primaryRole ?? "") as RoleCode | "";
-  const entry = ROUTE_ACCESS.find((r) => r.href === href);
+  // The dashboard uses nested dynamic routes — ``/dashboard/exams/[id]``,
+  // ``/dashboard/exams/[id]/registrations``, etc. The static
+  // ``ROUTE_ACCESS`` map only declares the *parent* paths; the child
+  // URL needs to inherit the parent's role gate. We do a
+  // longest-prefix match so a child never bypasses its parent's
+  // role restriction.
+  const entry = ROUTE_ACCESS
+    .filter((r) => href === r.href || href.startsWith(`${r.href}/`))
+    // Prefer the most specific match so e.g. ``/dashboard/student``
+    // (a STUDENT-only path) is used over any shorter prefix.
+    .sort((a, b) => b.href.length - a.href.length)[0];
   if (!entry) return false;
   return entry.roles.has(role as RoleCode);
 }

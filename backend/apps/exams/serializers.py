@@ -180,10 +180,20 @@ class StudentRegistrationSerializer(serializers.ModelSerializer):
     let the front-end render the registration list without a second
     round-trip to /users/. The ``qr_url`` field gives the printable
     image URL for the door scanner.
+
+    PII gate (Phase 25): a STUDENT viewer — one whose only read
+    grant is ``exam.registration.view_own`` and who therefore can
+    only see their own row after the viewset's ``get_queryset``
+    filter — still gets the email + name on the one row they
+    legitimately see (themselves). For any other student row the
+    viewset would 404, so the gate below only matters for
+    defence-in-depth: if a future refactor accidentally widens
+    the queryset, the PII still won't leak. Wide readers
+    (EO/SA/HoD/Dean/SecOps) see the fields on every row.
     """
 
-    student_email = serializers.CharField(source="student.email", read_only=True)
-    student_name = serializers.CharField(source="student.full_name", read_only=True)
+    student_email = serializers.SerializerMethodField()
+    student_name = serializers.SerializerMethodField()
     qr_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -205,6 +215,41 @@ class StudentRegistrationSerializer(serializers.ModelSerializer):
             "student_name",
             "qr_url",
         )
+
+    # ------------------------------------------------------------------
+    # PII visibility helpers
+    # ------------------------------------------------------------------
+    def _viewer_can_see_pii(self, obj: StudentRegistration) -> bool:
+        """True unless the viewer is a narrow-read student looking at
+        somebody else's row.
+
+        The codename check is the same shape the viewset uses in
+        ``get_queryset`` — wide readers always pass; everyone else
+        must own the row.
+        """
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        wide_codes = (
+            "people.student.crud",
+            "exam.session.crud",
+            "attendance.view",
+        )
+        if any(user.has_permission(code) for code in wide_codes):
+            return True
+        # Narrow-read path: only the row's own student may see PII.
+        return obj.student_id == user.id
+
+    def get_student_email(self, obj: StudentRegistration) -> str | None:
+        if not self._viewer_can_see_pii(obj):
+            return None
+        return obj.student.email
+
+    def get_student_name(self, obj: StudentRegistration) -> str | None:
+        if not self._viewer_can_see_pii(obj):
+            return None
+        return obj.student.full_name
 
     def get_qr_url(self, obj: StudentRegistration) -> str:
         # Relative URL — the frontend concatenates it with the

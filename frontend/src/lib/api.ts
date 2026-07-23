@@ -985,6 +985,22 @@ export const getStudentRegistrations = (
     `/api/v1/exams/registrations/${qs(params)}`,
   );
 
+/**
+ * Phase 25 — convenience helper for the student QR card page. Given
+ * the signed-in user's id and a target exam-session id, returns the
+ * single registration row (or ``null`` if the student has no
+ * registration for that session). The backend's ``get_queryset``
+ * already narrows the result set to the caller's own rows, so a
+ * ``null`` return is the only legitimate outcome.
+ */
+export async function getMyRegistrationForSession(
+  userId: string,
+  sessionId: string,
+): Promise<StudentRegistration | null> {
+  const result = await getStudentRegistrations({ student: userId, session: sessionId });
+  return result.results[0] ?? null;
+}
+
 export async function createStudentRegistration(payload: {
   session: string;
   student: string;

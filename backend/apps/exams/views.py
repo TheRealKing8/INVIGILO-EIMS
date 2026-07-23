@@ -293,12 +293,17 @@ class ExamSessionViewSet(viewsets.ModelViewSet):
 
 # Permission sets used by StudentRegistrationViewSet.
 # Read is open to the same roles that can see the attendance roster
-# (operations + security). Write is a staff operation (EO).
+# (operations + security) AND to a narrow self-read grant
+# (``exam.registration.view_own``) that the STUDENT role holds.
+# The viewset's ``get_queryset`` filter is what turns the narrow
+# grant into a "see only your own row" contract — the codename on
+# its own is a class-level (request-level) check, not a per-row one.
+# See Phase 25 for the full write-up.
 _REG_READ_PERMS = (
     "people.student.crud",
     "exam.session.crud",
     "attendance.view",
-    "exam.session.view_own",
+    "exam.registration.view_own",
 )
 _REG_WRITE_PERMS = (
     "people.student.crud",
@@ -324,6 +329,41 @@ class StudentRegistrationViewSet(viewsets.ModelViewSet):
     search_fields = ("student__email", "student__full_name", "student_code")
     ordering_fields = ("session__starts_at", "created_at")
     ordering = ("session__starts_at", "student__email")
+
+    # ------------------------------------------------------------------
+    # RBAC
+    # ------------------------------------------------------------------
+    # The ``any``-of semantics in :class:`HasPermission` mean the
+    # codenames above are alternatives, not ANDs. The narrow grant
+    # ``exam.registration.view_own`` is enough on its own for a
+    # STUDENT to read, but ``get_queryset`` then narrows the rows to
+    # ``student == request.user`` so a STUDENT never sees another
+    # student's row (or their PII). The wide codes
+    # (``people.student.crud`` / ``exam.session.crud`` /
+    # ``attendance.view``) keep the EO roster + SecOps door roster
+    # unchanged.
+    _WIDE_READ_CODENAMES = (
+        "people.student.crud",
+        "exam.session.crud",
+        "attendance.view",
+    )
+
+    def get_queryset(self):  # type: ignore[no-untyped-def]
+        """Narrow the queryset for non-wide readers.
+
+        Wide readers (operations roles + anyone holding
+        ``attendance.view``) see every row. Everyone else — by
+        design, the STUDENT role with only
+        ``exam.registration.view_own`` — sees only their own row.
+        The ``qr_png`` action goes through ``self.get_object()``,
+        which uses this queryset, so a student calling another
+        student's QR endpoint now gets a 404 instead of a PNG.
+        """
+        qs = super().get_queryset()
+        user = self.request.user
+        if not any(user.has_permission(code) for code in self._WIDE_READ_CODENAMES):
+            qs = qs.filter(student=user)
+        return qs
 
     def get_permissions(self):  # type: ignore[no-untyped-def]
         if self.action in {"list", "retrieve", "qr_png"}:

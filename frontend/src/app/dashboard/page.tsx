@@ -830,9 +830,13 @@ function StudentOverview({ greeting, firstName }: { greeting: string; firstName:
             <Badge tone={sessionStatusTone[next.status].tone} withDot>
               {sessionStatusTone[next.status].label}
             </Badge>
-            <Link href={`/dashboard/exams/${next.id}`}>
+            {/* Phase 25 — the student QR card page. The student taps
+                this to land on the rotating 60s QR for THIS session.
+                Replaces the old "View session" link to /dashboard/exams/[id]
+                (which is operations-only and would 403 the student). */}
+            <Link href={`/dashboard/student/exams/${next.id}/card`}>
               <Button variant="primary" size="md" iconRight="arrow-right">
-                View session
+                View exam card
               </Button>
             </Link>
           </div>

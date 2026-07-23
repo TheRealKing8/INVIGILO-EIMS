@@ -1,0 +1,135 @@
+# ============================================================================
+# Render Blueprint — INVIGILO backend
+# ============================================================================
+#
+# Provision via:  render.com → New + → Blueprint → pick this repo, file
+#                 `backend/render.yaml`.
+#
+# What you get:
+#   * ``invigilo-db``  — a free PostgreSQL 16 instance (auto-attached to
+#     the web service below via ``fromDatabase``).
+#   * ``invigilo-api`` — a free Python web service running gunicorn,
+#     Django + DRF, with auto-deploy on push to ``main``.
+#
+# Free-tier caveats (read these BEFORE you click deploy):
+#   * Free Postgres expires after 90 days. Render will email a warning;
+#     you must then re-provision or upgrade.
+#   * Free web service sleeps after 15 min of inactivity. The first
+#     request after sleep takes 30-50s to wake. For a public demo
+#     this is fine; for a production exam-day system, upgrade to a
+#     paid plan or put a keep-alive ping in front of it.
+#   * Free tier does NOT support a long-running Celery worker. The
+#     ``CELERY_TASK_ALWAYS_EAGER`` env var (set below) makes Celery
+#     run tasks synchronously in-process, so notifications still get
+#     created — the email *send* will fall through to the console
+#     backend in dev/prod unless you wire a real worker. Phase 14's
+#     notifications still work; the door card's email confirmations
+#     are best-effort.
+#
+# To rotate secrets: regenerate ``DJANGO_SECRET_KEY`` with
+#     python -c "import secrets; print(secrets.token_urlsafe(50))"
+# paste into the web service's Environment tab, hit "Save Changes",
+# Render will auto-redeploy.
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # Database
+  # --------------------------------------------------------------------------
+  - type: psql
+    name: invigilo-db
+    plan: free
+    # Free Postgres 16 by default. Render injects the connection string
+    # into the web service as the ``DATABASE_URL`` env var. Our
+    # settings/base.py honours ``DB_BACKEND=postgres`` and reads
+    # POSTGRES_* individually, so we set those too in the web service
+    # below — the Blueprint auto-fills them from the DB's env.
+    databaseName: invigilo
+    databaseUser: invigilo
+    ipAllowList: []  # Only the web service in the same Render account can reach it.
+
+  # --------------------------------------------------------------------------
+  # Web service
+  # --------------------------------------------------------------------------
+  - type: web
+    name: invigilo-api
+    runtime: python
+    plan: free
+    region: oregon  # closest free region to most viewers; change if needed.
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /api/health/
+    buildCommand: |
+      pip install --upgrade pip &&
+      pip install -r requirements/prod.txt &&
+      python manage.py collectstatic --noinput
+    startCommand: |
+      python manage.py migrate --noinput &&
+      gunicorn invigilo.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 60
+    envVars:
+      # --- Core Django ----------------------------------------------------
+      - key: DJANGO_SETTINGS_MODULE
+        value: invigilo.settings.prod
+      - key: DJANGO_DEBUG
+        value: "False"
+      # Replace with your real Vercel URL after step 2 of the runbook.
+      # The "*" lets the health check + OpenAPI docs work pre-deploy.
+      - key: DJANGO_ALLOWED_HOSTS
+        value: "invigilo-api.onrender.com"
+      # The frontend's exact Vercel URL (set after the Vercel project
+      # is provisioned in step 2). Do NOT add a trailing slash.
+      - key: DJANGO_CORS_ALLOWED_ORIGINS
+        value: "https://invigilo-frontend.vercel.app"
+      # --- Security --------------------------------------------------------
+      # Generate with: python -c "import secrets; print(secrets.token_urlsafe(50))"
+      # You MUST replace this value in the Render dashboard. The placeholder
+      # below will let the service boot, but every request will fail
+      # signature checks — set a real one before going live.
+      - key: DJANGO_SECRET_KEY
+        value: "REPLACE-ME-in-render-dashboard-with-50-chars-of-randomness"
+      - key: JWT_SIGNING_KEY
+        sync: false  # Set this in the dashboard; same value as SECRET_KEY is fine.
+      - key: JWT_REFRESH_COOKIE_SECURE
+        value: "True"
+      - key: JWT_REFRESH_COOKIE_SAMESITE
+        value: "Lax"
+      # --- Database (auto-injected by Render from the psql service above) -
+      - key: DB_BACKEND
+        value: "postgres"
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: invigilo-db
+          property: databaseName
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: invigilo-db
+          property: databaseUser
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: invigilo-db
+          property: password
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: invigilo-db
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: invigilo-db
+          property: port
+      # --- Celery (no free-tier worker → run eagerly) ---------------------
+      - key: CELERY_TASK_ALWAYS_EAGER
+        value: "True"
+      # --- Email (optional) -----------------------------------------------
+      # If you want real email delivery you must add a worker (paid
+      # plan) or use an external SMTP relay. The console backend is
+      # the safe default for the free tier.
+      - key: EMAIL_BACKEND
+        value: "django.core.mail.backends.console.EmailBackend"
+      # --- AI assistant (optional) ---------------------------------------
+      # Leave OPENROUTER_API_KEY empty to use the rule-based fallback.
+      - key: OPENROUTER_API_KEY
+        value: ""
+      - key: OPENROUTER_BASE_URL
+        value: "https://openrouter.ai/api/v1"
+      - key: OPENROUTER_MODEL
+        value: "openai/gpt-4.1-mini"

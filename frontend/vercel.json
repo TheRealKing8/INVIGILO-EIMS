@@ -1,0 +1,38 @@
+# ============================================================================
+# Vercel — INVIGILO frontend
+# ============================================================================
+#
+# Provision via:  vercel.com → Add New → Project → pick the Invigilo repo,
+#                 set the root directory to ``frontend``, framework preset
+#                 "Next.js", and add the env var
+#                 ``NEXT_PUBLIC_API_BASE_URL=https://invigilo-api.onrender.com``.
+#
+# This file is optional — Vercel auto-detects Next.js projects and the
+# defaults match what we want. It exists so the config is versioned
+# alongside the code, and so the build/output behaviour is explicit
+# rather than implicit.
+# ============================================================================
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "outputDirectory": ".next",
+  "regions": ["iad1"],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
+  ]
+}

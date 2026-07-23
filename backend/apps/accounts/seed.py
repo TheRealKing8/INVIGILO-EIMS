@@ -138,6 +138,11 @@ PERMISSIONS: Final[tuple[dict, ...]] = (
     {"codename": "timetable.public.view", "name": "View public timetable"},
     {"codename": "attendance.checkin_any", "name": "Check in any attendee"},
     {"codename": "incident.log_for_others", "name": "Log incidents for others"},
+    # Phase 25 — student self-service QR. The viewset pairs this with
+    # a ``get_queryset`` override that narrows to ``student=request.user``
+    # so a STUDENT holding *only* this code cannot read other students'
+    # rows. See ``apps/exams/views.py::StudentRegistrationViewSet``.
+    {"codename": "exam.registration.view_own", "name": "View own student registration + QR"},
 )
 
 
@@ -250,6 +255,13 @@ ROLE_PERMISSIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "attendance.checkin_own",
             "notification.view_own",
             "incident.create",
+            # Phase 25 — the student needs to fetch their own
+            # registration row (and the rotating 60s QR PNG) so the
+            # ``/dashboard/student/exams/[id]/card`` page can render
+            # the door-card. The viewset's ``get_queryset`` filters
+            # the view to ``student == request.user`` for holders of
+            # this codename, so it is *not* a list-everyone grant.
+            "exam.registration.view_own",
         ),
     ),
     (
