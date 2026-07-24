@@ -21,8 +21,9 @@ import { Badge } from "@/components/ui/badge";
 import { BrandMark } from "@/components/ui/brand";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { SearchPopover } from "@/components/search-popover";
-import type { AuthUser } from "@/lib/api";
-import { getUnreadCount } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { API_BASE_URL, type AuthUser } from "@/lib/api";
+import { useEventStream } from "@/lib/use-sse";
 import { visibleNavItems, type RouteAccess } from "@/lib/route-config";
 
 type NavItem = RouteAccess; // alias to keep the rest of this file unchanged
@@ -244,32 +245,34 @@ export function Topbar({
   const router = useRouter();
   const menuRef = useRef<HTMLDivElement | null>(null);
   const searchWrapRef = useRef<HTMLDivElement | null>(null);
+  const { user: authUser } = useAuth();
 
-  // Poll the unread-count endpoint every 60s. SA + EO don't have the
-  // ``notification.view_own`` codename (see apps.accounts.seed), so
-  // the bell stays at "— / no badge" for them. The call may 403 in
-  // that case — we silently ignore the failure and keep the previous
-  // count on screen so the badge never blinks.
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    async function tick() {
-      try {
-        const { count } = await getUnreadCount();
-        if (!cancelled) setUnread(count);
-      } catch {
-        if (!cancelled) setUnread((prev) => prev ?? 0);
-      } finally {
-        if (!cancelled) timer = setTimeout(tick, 60_000);
-      }
-    }
-    tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
+  // Phase 26 — subscribe to the per-user notification SSE stream. The
+  // server emits ``snapshot`` on connect with the current unread count,
+  // then ``unread_count`` whenever a Notification is created or
+  // marked-read for this user. The stream auto-reconnects every 5
+  // minutes (the server's ``MAX_STREAM_LIFETIME_SECONDS`` cap) with a
+  // 2s/5s/10s backoff — see ``frontend/src/lib/use-sse.ts``.
+  //
+  // We listen on ``authUser.id`` as a dep so a logout/re-login tears
+  // the stream down and re-mounts with the new user's channel
+  // (``user:<id>``). SA + EO don't hold ``notification.view_own`` —
+  // the stream still opens (the view's only perm is
+  // ``IsAuthenticated``), but we silently ignore any non-recoverable
+  // error so the bell stays at "—" for them.
+  useEventStream<{ unread_count: number }>(
+    `${API_BASE_URL}/api/v1/realtime/notifications/stream/`,
+    {
+      onSnapshot: (data) => setUnread(data.unread_count),
+      onEvent: (name, data) => {
+        if (name === "unread_count") setUnread(data.unread_count);
+      },
+      // Same UX as the old 60s poll: don't surface stream errors; the
+      // badge just doesn't update until the next successful reconnect.
+      onError: () => undefined,
+    },
+    [authUser?.id],
+  );
 
   useEffect(() => {
     function onClick(e: MouseEvent) {

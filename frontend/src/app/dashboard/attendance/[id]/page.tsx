@@ -14,7 +14,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { Badge } from "@/components/ui/badge";
@@ -25,12 +25,13 @@ import { StatusBanner } from "@/components/ui/status-banner";
 import {
   bulkCheckIn,
   exportAttendanceCsvUrl,
-  getAttendanceLive,
   getAttendanceRoster,
+  API_BASE_URL,
   type LiveFeed,
   type Roster,
   type RosterEntry,
 } from "@/lib/api";
+import { useEventStream } from "@/lib/use-sse";
 import { useFetch } from "@/lib/use-fetch";
 import { useAuth } from "@/lib/auth";
 
@@ -61,46 +62,47 @@ function initialsOf(name: string): string {
 }
 
 /**
- * The "Live" panel — last 20 check-ins, polled every 5s.
+ * The "Live" panel — last 20 check-ins, fed by the per-session SSE
+ * stream (Phase 26).
  *
- * This is a Phase 19 addition. The endpoint is
- * ``GET /api/v1/attendance/sessions/{id}/live/`` (20 rows
- * most-recent-first). We poll it on a 5s interval while the
- * page is open. SSE would be nicer but is out of scope for
- * Phase 19.
+ * The endpoint is ``GET /api/v1/realtime/attendance/sessions/<id>/stream/``.
+ * The server emits ``snapshot`` on connect with the 20 most recent
+ * CheckIn rows, then ``checkin`` per new row (with the full
+ * 20-row re-emission, not a single-row delta). The stream
+ * auto-reconnects every 5 minutes (the server's
+ * ``MAX_STREAM_LIFETIME_SECONDS`` cap) with a 2s/5s/10s backoff —
+ * see ``frontend/src/lib/use-sse.ts``.
  *
- * 5s is short enough that a security officer at the door
- * sees a check-in appear within ~6s of the camera
- * submission. Long enough that a room of 10 secops
- * generates only 120 req/min — well within the global
- * 1000/min user throttle.
+ * The previous version of this panel polled
+ * ``GET /api/v1/attendance/sessions/{id}/live/`` every 5s and
+ * surfaced fetch errors as red text. The new version surfaces
+ * stream errors the same way.
  */
 function LiveFeedPanel({ sessionId }: { sessionId: string }) {
   const [feed, setFeed] = useState<LiveFeed | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const next = await getAttendanceLive(sessionId);
-        if (cancelled) return;
+  useEventStream<LiveFeed>(
+    `${API_BASE_URL}/api/v1/realtime/attendance/sessions/${sessionId}/stream/`,
+    {
+      onSnapshot: (next) => {
         setFeed(next);
         setLastUpdated(new Date());
         setError(null);
-      } catch (err) {
-        if (cancelled) return;
+      },
+      onEvent: (name, next) => {
+        if (name !== "checkin") return;
+        setFeed(next);
+        setLastUpdated(new Date());
+        setError(null);
+      },
+      onError: (err) => {
         setError(err instanceof Error ? err.message : "Could not load live feed");
-      }
-    };
-    void tick();
-    const id = window.setInterval(tick, 5_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [sessionId]);
+      },
+    },
+    [sessionId],
+  );
 
   return (
     <Card padded={false}>
