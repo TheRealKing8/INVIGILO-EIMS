@@ -1,0 +1,35 @@
+# Bind-mount in compose mounts /app on the host. Exclude the host's
+# Python venv, build caches, and editor tempfiles so the image's
+# installed packages aren't shadowed on a cold start.
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# .env on the host is the dev override; the image should not bake one in.
+.env
+.env.*
+!.env.example
+
+# Local DB / migration scratch from a developer's day
+*.sqlite3
+db.sqlite3
+db.sqlite3-journal
+
+# OS / editor tempfiles
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Test output
+test-results.xml
+playwright-report/

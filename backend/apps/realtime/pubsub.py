@@ -5,6 +5,16 @@ worker has one. When something interesting happens (a Notification is
 created, a CheckIn lands) we call :meth:`PubSub.publish` with a channel
 name; the SSE consumer coroutine in the *same* process is woken up.
 
+TODO Phase 27+: swap in-process pubsub for redis.asyncio.pubsub when we
+move to multi-worker gunicorn. Today the backend service in
+docker-compose.yml runs ``-w 1`` (matching Render's single-dyno free
+tier); with -w 2, a Notification saved in worker A would never wake a
+subscriber in worker B. The Redis swap is scoped: replace the
+``_subs`` dict + ``_loop`` background thread with a redis.asyncio.pubsub
+``PubSub`` channel per ``user:<id>`` / ``session:<id>`` namespace. The
+public surface (``publish`` / ``subscribe`` / ``unsubscribe``) stays
+the same.
+
 Channels are namespaced strings:
 
   * ``user:<user_id>`` — per-user wakes (the topbar bell).

@@ -27,5 +27,61 @@ services:
       timeout: 5s
       retries: 5
 
+  # Phase 0: the Django backend itself. Built from backend/Dockerfile;
+  # bind-mounts the source tree so edits on the host are picked up on
+  # container restart (no rebuild). Runs gunicorn -w 1 because Phase 20's
+  # apps/realtime/pubsub.py is an in-process module-level singleton — a
+  # second worker would miss cross-worker wakes. The Redis-pubsub swap
+  # is deferred (TODO in pubsub.py) so we can run -w 1 today and -w N
+  # tomorrow without a code change beyond the swap itself.
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: invigilo-backend
+    command: ["bash", "/app/docker/entrypoint.sh"]
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override POSTGRES_HOST/REDIS_URL to talk to the in-network services
+      # even if .env still points at "postgres" — docker compose's service
+      # name resolution handles this regardless, but being explicit avoids
+      # a surprise if the operator has set a different host in .env.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      EMAIL_HOST: mailhog
+      EMAIL_PORT: 1025
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      # Bind-mount the source so `docker compose restart backend` picks up
+      # code changes. Exclude the venv + pyc + caches via the .dockerignore
+      # in backend/ so we don't shadow the installed packages in the image.
+      - ./backend:/app
+      # Named volume for pip's user site so the host's bind-mount doesn't
+      # clobber the image's installed packages.
+      - backend_pip:/root/.local
+    restart: unless-stopped
+
+  # mailhog: SMTP catch-all so the Phase 12 OTP email + the Phase 14
+  # notification email + the Phase 22 reset-password email are all
+  # inspectable at http://localhost:8025. The .env.example already names
+  # it; this is just the matching service.
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: invigilo-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+
 volumes:
   postgres_data:
+  backend_pip:

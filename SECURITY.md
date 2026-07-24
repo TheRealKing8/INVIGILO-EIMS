@@ -4,6 +4,20 @@ These scripts are the final step of the Postgres migration. They take
 Postgres out of the trust mode (no password) it was set to during the
 data migration, and restore proper authentication.
 
+## Which variant do I use?
+
+- **Windows + XAMPP / native Postgres install** — use the PowerShell
+  scripts in this file (the "PowerShell variant" below). This is the
+  legacy path; the Postgres install lives at
+  `C:\Program Files\PostgreSQL\17` and the script edits
+  `pg_hba.conf` directly.
+- **Docker / Linux / macOS** — use the bash scripts in
+  `backend/scripts/` (the "Docker variant" below). This is the path
+  Phase 0 ships; the Postgres instance runs in a container under
+  `docker compose` and the script edits the in-container
+  `pg_hba.conf` via `docker cp`. Run with `make lockdown` or
+  `bash backend/scripts/lockdown-postgres.sh`.
+
 ## The order
 
 Run each script in order, in an **elevated** PowerShell window, from
@@ -77,3 +91,67 @@ The new passwords are printed to the elevated PowerShell window by
 `rotate-pg-passwords.ps1`. Save them somewhere safe (1Password,
 Bitwarden, etc.) — they're also in `.env` but the script doesn't echo
 them after the rotation completes.
+
+## Docker / Linux / macOS variant (Phase 0+)
+
+Phase 0 ships the same flow as bash scripts under `backend/scripts/`.
+The order is identical, the inputs are the same, the audit trail is
+preserved.
+
+| # | Script | What it does |
+|---|---|---|
+| 1 | `backend/scripts/rotate-pg-passwords.sh` | Generate two new random passwords. `ALTER USER` in the DB. Update `backend/.env` in place. Backs up `.env` to `.env.bak.<ts>`. |
+| 2 | `backend/scripts/lock-pg-hba.sh` | `docker cp` a new `pg_hba.conf` (scram-sha-256 only) into the running postgres container. `docker compose restart postgres`. Backs up the old file to `pg_hba.conf.bak.trust-<ts>` inside the container. |
+| 3 | `docker compose restart backend` (called by the orchestrator) | The gunicorn worker still has the old `.env` in memory; restart it so the new `POSTGRES_PASSWORD` is picked up. |
+| 4 | `backend/scripts/verify-dashboard.sh` | Log in via the API and probe each module endpoint to confirm the system still works. |
+
+### Run the full flow
+
+```
+make lockdown
+```
+
+Or step by step:
+
+```
+bash backend/scripts/rotate-pg-passwords.sh
+bash backend/scripts/lock-pg-hba.sh
+docker compose restart backend
+sleep 3
+bash backend/scripts/verify-dashboard.sh
+```
+
+`SKIP_PAUSE=1` on the orchestrator runs through all four steps without
+prompting — useful in CI or for scripted runs.
+
+### Container naming
+
+The bash scripts assume:
+
+- The Postgres container is named `invigilo-postgres` (matches
+  `docker-compose.yml`).
+- The backend service is named `backend` (matches
+  `docker-compose.yml`).
+- `backend/.env` exists and is writable by the user running the
+  scripts (not the container's user; the script runs on the host and
+  uses `psql` from the host's PATH).
+
+If any of those are different in your environment, override with env
+vars: `POSTGRES_CONTAINER=... BACKEND_SERVICE=... bash backend/scripts/lockdown-postgres.sh`.
+
+### Recovery (Docker variant)
+
+The Docker recovery is the same shape as the PowerShell recovery
+above, but the steps land in the container:
+
+1. `docker exec -it invigilo-postgres bash`
+2. Edit `/var/lib/postgresql/data/pg_hba.conf` (or copy the
+   `.bak.trust-<ts>` back over it).
+3. `docker compose restart postgres`
+4. If `backend/.env` is also wrong, restore from `.env.bak.<ts>`.
+5. `docker compose restart backend`
+
+The named volume (`postgres_data`) is the source of truth; deleting
+the container does NOT delete the data. If you need a fresh
+Postgres-from-scratch, `make reset` does it (down -v + up + migrate).
+
